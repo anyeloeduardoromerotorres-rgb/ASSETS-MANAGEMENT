@@ -17,12 +17,12 @@ const assetSchema = new mongoose.Schema ({
     initialInvestment:{
         type: Object
     },
-    maxPriceFiveYear: {
+    maxPriceSevenYear: {
         type: Number,
         require: true,
         trim: true
     },
-    minPriceFiveYear: {
+    minPriceSevenYear: {
         type: Number,
         default: 0,
         trim: true

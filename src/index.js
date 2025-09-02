@@ -17,12 +17,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor escuchando en http://localhost:${PORT}`);
 });
-
-const data = await getCandlesWithStats("BTCUSDT", 7);
-
-console.log("Total velas:", data.candles.length);
-console.log("Máximo en 7 años:", data.stats.high);
-console.log("Mínimo en 7 años:", data.stats.low);
-
-// Ejemplo de acceso al precio de cierre y fecha de la primera vela
-console.log("Primera vela:", data.candles[0].closeTime, data.candles[0].close);

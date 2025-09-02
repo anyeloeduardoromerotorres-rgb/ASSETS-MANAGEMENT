@@ -54,14 +54,12 @@ export async function getCandlesWithStats(symbol, years = 7) {
   const candles = await getAllDailyCandles(symbol);
   const { high, low } = getHighLowLastYears(candles, years);
 
+  
+
   return {
-    symbol,
-    candles, // todas las velas (con closeTime, close, high, low)
-    stats: {
-      years,
-      high,
-      low,
-    },
+    candles, // todas las velas (con closeTime, close, high, low)    
+    high,
+    low,
   };
 }
 
