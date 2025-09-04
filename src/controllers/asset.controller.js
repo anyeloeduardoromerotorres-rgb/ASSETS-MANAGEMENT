@@ -5,13 +5,15 @@ import { parseSymbol } from "../utils/parseSymbol.js";
 
 // 🔹 Funciones que ya tienes en utils
 import { getAllBalances } from "../scripts/fetchBalanceBinance.js";
-import { getCandlesWithStats } from "../scripts/fetchHistoricalMaxMin.js";
+import { getCandlesWithStats, getAllDailyCandles, getHighLowLastYears } from "../scripts/fetchHistoricalMaxMin.js";
+import { calculateSlope } from "../scripts/linearRegression.js"; // 👈 importar función
 
 export const getAssets = (req, res) => res.send('getAsset')
 // 📌 Crear un nuevo Asset junto con su historial de cierres
 
 
 export const createAsset = async (req, res) => {
+  console.log('estoy aqui');
   try {
     const { symbol, exchange, initialInvestment } = req.body;
 
@@ -36,9 +38,10 @@ export const createAsset = async (req, res) => {
 
     // 🔹 Obtener velas y estadísticas
     const { candles, high, low } = await getCandlesWithStats(symbol);
-    
+        console.log('me gustaria estar aqui');
 
-    // 🔹 Crear Asset
+
+    // 🔹 Crear Asset (slope aún vacío)
     const asset = new Asset({
       symbol,
       base,
@@ -48,6 +51,7 @@ export const createAsset = async (req, res) => {
       initialInvestment,
       maxPriceSevenYear: high,
       minPriceSevenYear: low,
+      slope: null, // lo calculamos luego
     });
 
     await asset.save();
@@ -68,8 +72,13 @@ export const createAsset = async (req, res) => {
 
     await closeHistory.save();
 
+    // 🔹 Calcular pendiente y actualizar asset
+    const slope = await calculateSlope(asset._id);
+    asset.slope = slope;
+    await asset.save();
+
     res.status(201).json({
-      message: "✅ Asset y CloseHistory creados con éxito",
+      message: "✅ Asset, CloseHistory y slope creados con éxito",
       asset,
       closeHistory,
     });
@@ -79,7 +88,6 @@ export const createAsset = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-
 export const deleteAssets = (req, res) => res.send('deleteAsset')
 export const putAssets = (req, res) => res.send('putAsset')
 

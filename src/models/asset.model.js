@@ -15,7 +15,8 @@ const assetSchema = new mongoose.Schema ({
         trim: true,
     },    
     initialInvestment:{
-        type: Object
+        type: Object,
+        default: 200
     },
     maxPriceSevenYear: {
         type: Number,
@@ -24,8 +25,11 @@ const assetSchema = new mongoose.Schema ({
     },
     minPriceSevenYear: {
         type: Number,
-        default: 0,
         trim: true
+    },
+    slope:{
+        type: Number,
+        require: true
     }
 }, { timestamps: true })
 

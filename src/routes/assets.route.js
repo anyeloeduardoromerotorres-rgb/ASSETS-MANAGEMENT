@@ -3,7 +3,7 @@ import {getAssets, createAsset, deleteAssets, putAssets} from '../controllers/as
 
 const router  = Router();
 
-router.get('/assets/:id', getAssets)
+router.get('/assets', getAssets)
 router.post('/assets', createAsset)
 router.delete('/assets/:id', deleteAssets)
 router.put('/assets/:id', putAssets)

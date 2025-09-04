@@ -3,7 +3,7 @@ import axios from "axios";
 import { getBinanceBaseUrl } from "../utils/binance.utils.js";
 
 // 1️⃣ Traer todas las velas diarias
-export async function getAllDailyCandles(symbol) {
+export async function getAllDailyCandles(symbol, startTime = 0) {
   const baseUrl = await getBinanceBaseUrl();
   const url = `${baseUrl}api/v3/klines`;
 
@@ -11,7 +11,11 @@ export async function getAllDailyCandles(symbol) {
   const now = Date.now();
   const limit = 1000;
   let allCandles = [];
-  let fetchStart = 0;
+
+  // 👇 Si es Date, conviértelo; si es null, usa 0
+  let fetchStart = startTime instanceof Date 
+    ? startTime.getTime() + 1 
+    : (startTime || 0);
 
   while (true) {
     const response = await axios.get(url, {
@@ -29,12 +33,14 @@ export async function getAllDailyCandles(symbol) {
 
     allCandles = allCandles.concat(candles);
 
+    // avanzar el puntero para la próxima página
     fetchStart = candles[candles.length - 1].closeTime.getTime() + 1;
     if (fetchStart >= now) break;
   }
 
   return allCandles;
 }
+
 
 // 2️⃣ Calcular máximo y mínimo de los últimos X años
 export function getHighLowLastYears(candles, years = 7) {
@@ -43,11 +49,18 @@ export function getHighLowLastYears(candles, years = 7) {
 
   const filtered = candles.filter(c => c.closeTime.getTime() >= cutoff);
 
+  // Si no hay suficientes datos (ej: par con < 7 años de historial)
+  if (filtered.length < years * 365) {
+    const high = Math.max(...filtered.map(c => c.high));
+    return { high, low: 0 };
+  }
+
   const high = Math.max(...filtered.map(c => c.high));
   const low = Math.min(...filtered.map(c => c.low));
 
   return { high, low };
 }
+
 
 // 3️⃣ Wrapper: devuelve todas las velas + high/low últimos X años
 export async function getCandlesWithStats(symbol, years = 7) {
