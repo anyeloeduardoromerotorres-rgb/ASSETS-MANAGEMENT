@@ -13,7 +13,6 @@ export const getAssets = (req, res) => res.send('getAsset')
 
 
 export const createAsset = async (req, res) => {
-  console.log('estoy aqui');
   try {
     const { symbol, exchange, initialInvestment } = req.body;
 
@@ -38,7 +37,6 @@ export const createAsset = async (req, res) => {
 
     // 🔹 Obtener velas y estadísticas
     const { candles, high, low } = await getCandlesWithStats(symbol);
-        console.log('me gustaria estar aqui');
 
 
     // 🔹 Crear Asset (slope aún vacío)
