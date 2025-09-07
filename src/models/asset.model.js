@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { type } from "os";
 
 const assetSchema = new mongoose.Schema ({
     symbol:{
@@ -8,16 +9,15 @@ const assetSchema = new mongoose.Schema ({
     exchange:{        
         type: mongoose.Schema.Types.ObjectId,
         ref: "Exchange",  // 👈 referencia a Exchange
-    },
-    currentBalance: {
+    },    
+    totalCapitalWhenLastAdded:{
         type: Number,
         default: 0,
-        trim: true,
-    },    
+        trim: true
+    },
     initialInvestment:{
         type: Object,
-        default: 200
-    },
+    },    
     maxPriceSevenYear: {
         type: Number,
         require: true,
@@ -30,6 +30,9 @@ const assetSchema = new mongoose.Schema ({
     slope:{
         type: Number,
         require: true
+    },
+    fiat:{
+        type: Boolean
     }
 }, { timestamps: true })
 

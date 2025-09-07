@@ -1,6 +1,7 @@
 // candlesService.js
 import axios from "axios";
 import { getBinanceBaseUrl } from "../utils/binance.utils.js";
+import { fetchUsdPenFullHistory } from "../utils/fetchUsdPenFullHistory.js";
 
 // 1️⃣ Traer todas las velas diarias
 export async function getAllDailyCandles(symbol, startTime = 0) {
@@ -62,15 +63,22 @@ export function getHighLowLastYears(candles, years = 7) {
 }
 
 
-// 3️⃣ Wrapper: devuelve todas las velas + high/low últimos X años
+// 🔹 Wrapper: devuelve todas las velas + high/low últimos X años
 export async function getCandlesWithStats(symbol, years = 7) {
-  const candles = await getAllDailyCandles(symbol);
+  let candles = [];
+
+  if (symbol === "USDPEN") {
+    // 👉 Usar exchangerate.host para este par
+    candles = await fetchUsdPenFullHistory();
+  } else {
+    // 👉 Usar Binance para el resto de pares
+    candles = await getAllDailyCandles(symbol);
+  }
+
   const { high, low } = getHighLowLastYears(candles, years);
 
-  
-
   return {
-    candles, // todas las velas (con closeTime, close, high, low)    
+    candles, // todas las velas (con closeTime, close, high, low)
     high,
     low,
   };
