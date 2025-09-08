@@ -9,16 +9,18 @@ export const getAssets = (req, res) => res.send("getAsset");
 // 📌 Crear un nuevo Asset junto con su historial de cierres
 export const createAsset = async (req, res) => {
   try {
-    const { symbol, exchange, initialInvestment, fiat } = req.body;
+
+    
+    const { symbol, exchange, initialInvestment, type } = req.body;
+    
 
     // 🔹 Validar exchange (buscar por nombre)
     const exchangeDoc = await Exchange.findOne({ name: exchange });
     if (!exchangeDoc) {
       return res.status(404).json({ error: "Exchange no encontrado" });
     }
-
     // 🔹 Obtener velas y estadísticas
-    const { candles, high, low } = await getCandlesWithStats(symbol);
+    const { candles, high, low } = await getCandlesWithStats(symbol, 7, type);
 
     // 🔹 Crear Asset (sin base ni quote en el documento)
     const asset = new Asset({
@@ -28,7 +30,7 @@ export const createAsset = async (req, res) => {
       maxPriceSevenYear: high,
       minPriceSevenYear: low,
       slope: null, // lo calculamos luego
-      fiat
+      type
     });
 
     await asset.save();

@@ -31,8 +31,9 @@ const assetSchema = new mongoose.Schema ({
         type: Number,
         require: true
     },
-    fiat:{
-        type: Boolean
+    type:{
+        type: String,
+        enum: ["fiat", "crypto", "stock", "commodity"]
     }
 }, { timestamps: true })
 

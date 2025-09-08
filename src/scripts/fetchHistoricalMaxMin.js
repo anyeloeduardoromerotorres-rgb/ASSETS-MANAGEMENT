@@ -2,7 +2,8 @@
 import axios from "axios";
 import { getBinanceBaseUrl } from "../utils/binance.utils.js";
 import { fetchUsdPenFullHistory } from "../utils/fetchUsdPenFullHistory.js";
-
+import {getStockHistory} from '../utils/fetchFromYahoo.js'
+ 
 // 1️⃣ Traer todas las velas diarias
 export async function getAllDailyCandles(symbol, startTime = 0) {
   const baseUrl = await getBinanceBaseUrl();
@@ -43,36 +44,41 @@ export async function getAllDailyCandles(symbol, startTime = 0) {
 }
 
 
-// 2️⃣ Calcular máximo y mínimo de los últimos X años
+// ✅ Función robusta: sirve tanto para velas diarias de cripto como para acciones con menos sesiones
 export function getHighLowLastYears(candles, years = 7) {
   const now = Date.now();
   const cutoff = now - years * 365 * 24 * 60 * 60 * 1000;
 
+  // Filtramos solo las velas desde la fecha de corte
   const filtered = candles.filter(c => c.closeTime.getTime() >= cutoff);
 
-  // Si no hay suficientes datos (ej: par con < 7 años de historial)
-  if (filtered.length < years * 365) {
-    const high = Math.max(...filtered.map(c => c.high));
-    return { high, low: 0 };
+  if (filtered.length === 0) {
+    return { high: null, low: null }; // No hay datos disponibles
   }
 
-  const high = Math.max(...filtered.map(c => c.high));
-  const low = Math.min(...filtered.map(c => c.low));
+  const highs = filtered.map(c => c.high).filter(v => v != null);
+  const lows  = filtered.map(c => c.low).filter(v => v != null);
+
+  const high = highs.length ? Math.max(...highs) : null;
+  const low  = lows.length ? Math.min(...lows) : null;
 
   return { high, low };
 }
 
 
 // 🔹 Wrapper: devuelve todas las velas + high/low últimos X años
-export async function getCandlesWithStats(symbol, years = 7) {
+export async function getCandlesWithStats(symbol, years, type) {
   let candles = [];
 
   if (symbol === "USDPEN") {
     // 👉 Usar exchangerate.host para este par
     candles = await fetchUsdPenFullHistory();
-  } else {
+  } else if (type === "crypto"){
     // 👉 Usar Binance para el resto de pares
     candles = await getAllDailyCandles(symbol);
+  } else if (type === "stock"){
+    // 👉 Usar yahoo para stocks
+    candles = await getStockHistory(symbol);
   }
 
   const { high, low } = getHighLowLastYears(candles, years);
