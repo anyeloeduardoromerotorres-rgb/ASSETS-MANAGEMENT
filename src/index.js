@@ -17,9 +17,6 @@ connectdb();
 const PORT = process.env.PORT || 3000;
 
 
-app.get("/ping", (req, res) => {
-  res.json({ message: "pong 🏓" });
-});
 
 // Iniciar servidor
 app.listen(PORT, "0.0.0.0", () => {

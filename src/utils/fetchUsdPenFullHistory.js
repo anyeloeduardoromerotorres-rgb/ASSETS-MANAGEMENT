@@ -4,23 +4,26 @@ import dotenv from "dotenv";
 dotenv.config();
 
 /**
- * Trae el histórico diario de USD→PEN desde 1999 hasta hoy,
+ * Trae el histórico diario de USD→PEN desde una fecha dada hasta hoy,
  * fragmentando las peticiones en bloques de hasta 365 días.
  *
+ * @param {Date} [startDate] - Fecha de inicio (si no se pasa, usa 1999-01-04)
  * @returns {Promise<Array<{ closeTime: Date, close: number, high: number, low: number }>>}
  */
-export async function fetchUsdPenFullHistory() {
+export async function fetchUsdPenFullHistory(startDate) {
   const url = "https://api.exchangerate.host/timeframe";
   const apiKey = process.env.EXCHANGERATE_API_KEY;
 
   const earliest = new Date("1999-01-04");
   const today = new Date();
 
+  // 👇 Si no me pasan startDate, asumo earliest (modo full)
+  let start = startDate ? new Date(startDate) : earliest;
+
   const results = [];
 
-  let start = earliest;
   while (start < today) {
-    // calcular fin del bloque (hasta 365 días)
+    // calcular fin del bloque (máximo 365 días)
     const end = new Date(start);
     end.setDate(end.getDate() + 364);
     if (end > today) end.setTime(today.getTime());
@@ -36,13 +39,10 @@ export async function fetchUsdPenFullHistory() {
           access_key: apiKey,
           start_date: startStr,
           end_date: endStr,
-          symbols: "PEN",   // 👈 corregido (era currencies)
-          source: "USD",    // 👈 necesario para que devuelva USDPEN
+          symbols: "PEN",
+          source: "USD",
         },
       });
-
-      // 👇 imprime para debug
-      console.log("✅ Petición exitosa:", resp.data?.success);
 
       if (resp.data && resp.data.success && resp.data.quotes) {
         for (const [date, obj] of Object.entries(resp.data.quotes)) {
@@ -50,14 +50,14 @@ export async function fetchUsdPenFullHistory() {
             results.push({
               closeTime: new Date(date),
               close: obj.USDPEN,
-              high: obj.USDPEN, // no hay OHLC, así que todo = close
+              high: obj.USDPEN,
               low: obj.USDPEN,
             });
           }
         }
       } else {
         console.error("❌ Respuesta inesperada:", resp.data);
-        break; // opcional: reintentar en lugar de romper
+        break;
       }
     } catch (err) {
       console.error("❌ Error en request:", err.response?.data || err.message);
@@ -74,4 +74,5 @@ export async function fetchUsdPenFullHistory() {
 
   return results;
 }
+
 

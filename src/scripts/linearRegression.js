@@ -2,11 +2,11 @@
 import CloseHistory from "../models/pairHistorical.model.js";
 
 /**
- * Calcula la pendiente (slope) de la recta ajustada por mínimos cuadrados
- * usando los precios de cierre de un activo.
+ * Calcula el rendimiento anualizado (en %) usando regresión lineal
+ * sobre log(precio de cierre).
  *
  * @param {String} symbolId - ID del asset (ObjectId en CloseHistory.symbol)
- * @returns {Number} pendiente de la regresión lineal
+ * @returns {Number} rendimiento anual en %
  */
 export async function calculateSlope(symbolId) {
   // 1️⃣ Buscar historial en la base
@@ -15,16 +15,18 @@ export async function calculateSlope(symbolId) {
     throw new Error("Historial no encontrado para este symbol");
   }
 
-  // 2️⃣ Tomar las velas diarias
+  // 2️⃣ Tomar las velas
   const candles = history.historicalData[0]?.candles || [];
   if (candles.length === 0) {
     throw new Error("No hay datos de velas para calcular pendiente");
   }
 
-  // 3️⃣ Transformar datos en pares (x, y)
-  // x será el índice de cada día, y el precio de cierre
-  const x = candles.map((_, i) => i);
-  const y = candles.map(c => c.close);
+  // 3️⃣ Base temporal: usar días reales desde la primera vela
+  const start = new Date(candles[0].closeTime).getTime();
+  const x = candles.map(c =>
+    (new Date(c.closeTime).getTime() - start) / (1000 * 60 * 60 * 24) // días reales
+  );
+  const y = candles.map(c => Math.log(c.close));
 
   const n = x.length;
 
@@ -34,8 +36,13 @@ export async function calculateSlope(symbolId) {
   const sumXY = x.reduce((acc, xi, i) => acc + xi * y[i], 0);
   const sumX2 = x.reduce((acc, xi) => acc + xi * xi, 0);
 
-  // 5️⃣ Fórmula de la pendiente en regresión lineal
+  // 5️⃣ Fórmula de la pendiente en regresión lineal (tasa continua por día)
   const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
 
-  return slope;
+  // 6️⃣ Convertir a % anual compuesto
+  const annualizedReturn = (Math.exp(slope * 252) - 1) * 100;
+
+  return annualizedReturn;
 }
+
+
