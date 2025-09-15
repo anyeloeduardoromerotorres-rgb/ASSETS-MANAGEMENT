@@ -1,13 +1,49 @@
-import { useState } from "react";
-import { View, Text, StyleSheet, Button, TextInput, Alert } from "react-native";
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  Button,
+  TextInput,
+  Alert,
+  ActivityIndicator,
+  ScrollView,
+} from "react-native";
 import { Picker } from "@react-native-picker/picker";
 import { INITIAL_CAPITAL } from "../constants/config";
-import api from "../constants/api"; // 👈 importamos la instancia
+import api from "../constants/api";
+
+type Investment = {
+  _id?: string;
+  transaction: "Deposito" | "Retiro";
+  quantity: number;
+  currency?: "USD" | "PEN";
+  createdAt?: string;
+};
 
 export default function InversionesScreen() {
   const [mode, setMode] = useState<"deposit" | "withdraw" | null>(null);
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<"USD" | "PEN">("USD");
+
+  const [investments, setInvestments] = useState<Investment[] | null>(null);
+  const [loadingInvestments, setLoadingInvestments] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchInvestments();
+  }, []);
+
+  const totalCapital = useMemo(() => {
+    if (!investments) return INITIAL_CAPITAL;
+    const deposits = investments
+      .filter((inv) => inv.transaction === "Deposito")
+      .reduce((acc, inv) => acc + Number(inv.quantity), 0);
+    const withdrawals = investments
+      .filter((inv) => inv.transaction === "Retiro")
+      .reduce((acc, inv) => acc + Number(inv.quantity), 0);
+    return INITIAL_CAPITAL + deposits - withdrawals;
+  }, [investments]);
 
   const handleAdd = async () => {
     if (!amount || isNaN(Number(amount))) {
@@ -16,75 +52,134 @@ export default function InversionesScreen() {
     }
 
     try {
-      const res = await api.post("/depositewithdrawal", {
+      await api.post("/depositewithdrawal", {
         transaction: mode === "deposit" ? "Deposito" : "Retiro",
-        quantity: amount,
-        currency, // "USD" o "PEN"
+        quantity: Number(amount),
+        currency,
       });
 
-      Alert.alert(
-        "Éxito",
-        `${mode === "deposit" ? "Depósito" : "Retiro"} guardado`
-      );
-    } catch (error: any) {
-      console.error(error);
-      Alert.alert(
-        "Error",
-        error.response?.data?.error || "No se pudo guardar la transacción"
-      );
+      Alert.alert("Éxito", `${mode === "deposit" ? "Depósito" : "Retiro"} guardado`);
+      await fetchInvestments();
+    } catch (err: any) {
+      console.error("Error guardando transacción:", err);
+      Alert.alert("Error", err?.response?.data?.error ?? "No se pudo guardar la transacción");
     }
 
-    // Reiniciar estado
     setAmount("");
     setCurrency("USD");
     setMode(null);
   };
 
+  const fetchInvestments = async () => {
+    setLoadingInvestments(true);
+    setLoadError(null);
+    try {
+      const res = await api.get("/depositewithdrawal");
+      if (!Array.isArray(res.data)) throw new Error("Respuesta inválida del servidor");
+      setInvestments(res.data);
+    } catch (err: any) {
+      console.error("Error al cargar inversiones:", err);
+      setLoadError(err?.message ?? "Network Error");
+      setInvestments([]);
+    } finally {
+      setLoadingInvestments(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>📊 Inversiones</Text>
-      <Text style={styles.capital}>
-        Capital inicial: ${INITIAL_CAPITAL.toFixed(2)}
-      </Text>
+      <Text style={styles.capital}>Capital inicial: ${INITIAL_CAPITAL.toFixed(2)}</Text>
+      <Text style={styles.totalCapital}>Capital total: ${totalCapital.toFixed(2)}</Text>
 
       {mode === null ? (
-        <View style={styles.buttonsRow}>
-          <View style={styles.buttonWrapper}>
-            <Button title="➕ Agregar Depósito" onPress={() => setMode("deposit")} />
+        <>
+          <View style={styles.buttonsRow}>
+            <View style={styles.buttonWrapper}>
+              <Button title="➕ Agregar Depósito" onPress={() => setMode("deposit")} />
+            </View>
+            <View style={styles.buttonWrapper}>
+              <Button title="➖ Agregar Retiro" onPress={() => setMode("withdraw")} />
+            </View>
           </View>
-          <View style={styles.buttonWrapper}>
-            <Button title="➖ Agregar Retiro" onPress={() => setMode("withdraw")} />
+
+          <View style={{ marginTop: 12 }}>
+            {loadingInvestments && (
+              <View style={styles.centerRow}>
+                <ActivityIndicator />
+                <Text style={{ marginLeft: 8 }}>Cargando inversiones...</Text>
+              </View>
+            )}
+
+            {loadError && <Text style={styles.error}>Error: {loadError}</Text>}
+
+            {investments && investments.length === 0 && !loadingInvestments && (
+              <Text style={styles.empty}>No hay inversiones registradas</Text>
+            )}
+
+            {investments && investments.length > 0 && (
+              <ScrollView style={{ marginTop: 12 }}>
+                <View style={styles.columnsWrapper}>
+                  {/* Columna de Depósitos */}
+                  <View style={styles.column}>
+                    <Text style={styles.columnTitle}>💰 Depósitos</Text>
+                    {investments
+                      .filter((inv) => inv.transaction === "Deposito")
+                      .map((inv, idx) => (
+                        <View key={inv._id ?? `dep-${idx}`} style={styles.itemRow}>
+                          <Text style={styles.itemText}>
+                            {inv.currency ?? "USD"} {Number(inv.quantity).toFixed(2)}
+                          </Text>
+                          {inv.createdAt && (
+                            <Text style={styles.date}>
+                              {new Date(inv.createdAt).toLocaleString()}
+                            </Text>
+                          )}
+                        </View>
+                      ))}
+                  </View>
+
+                  {/* Columna de Retiros */}
+                  <View style={styles.column}>
+                    <Text style={styles.columnTitle}>💸 Retiros</Text>
+                    {investments
+                      .filter((inv) => inv.transaction === "Retiro")
+                      .map((inv, idx) => (
+                        <View key={inv._id ?? `ret-${idx}`} style={styles.itemRow}>
+                          <Text style={styles.itemText}>
+                            {inv.currency ?? "USD"} {Number(inv.quantity).toFixed(2)}
+                          </Text>
+                          {inv.createdAt && (
+                            <Text style={styles.date}>
+                              {new Date(inv.createdAt).toLocaleString()}
+                            </Text>
+                          )}
+                        </View>
+                      ))}
+                  </View>
+                </View>
+              </ScrollView>
+            )}
           </View>
-        </View>
+        </>
       ) : (
         <View>
+          <Text style={{ fontSize: 16, fontWeight: "bold", marginBottom: 8 }}>
+            {mode === "deposit" ? "Nuevo Depósito" : "Nuevo Retiro"}
+          </Text>
           <TextInput
             style={styles.input}
-            placeholder="Ingresa un monto"
+            placeholder="Monto"
             keyboardType="numeric"
             value={amount}
             onChangeText={setAmount}
           />
-
-          {/* Menú desplegable de moneda */}
-          <Picker selectedValue={currency} onValueChange={setCurrency}>
+          <Picker selectedValue={currency} onValueChange={(val) => setCurrency(val)}>
             <Picker.Item label="USD" value="USD" />
             <Picker.Item label="PEN" value="PEN" />
           </Picker>
-
-          <Button
-            title={mode === "deposit" ? "Agregar Depósito" : "Agregar Retiro"}
-            onPress={handleAdd}
-          />
-          <Button
-            title="⬅️ Volver"
-            color="gray"
-            onPress={() => {
-              setAmount("");
-              setCurrency("USD");
-              setMode(null);
-            }}
-          />
+          <Button title="Guardar" onPress={handleAdd} />
+          <Button title="Cancelar" color="gray" onPress={() => setMode(null)} />
         </View>
       )}
     </View>
@@ -92,17 +187,46 @@ export default function InversionesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: "#fff" },
-  title: { fontSize: 24, fontWeight: "bold", marginBottom: 15 },
-  capital: { fontSize: 18, marginBottom: 20 },
+  container: { flex: 1, padding: 20 },
+  title: { fontSize: 22, fontWeight: "bold", marginBottom: 10 },
+  capital: { fontSize: 16, marginBottom: 4 },
+  totalCapital: { fontSize: 18, fontWeight: "bold", marginBottom: 10 },
   buttonsRow: { flexDirection: "row", justifyContent: "space-between" },
   buttonWrapper: { flex: 1, marginHorizontal: 5 },
+  centerRow: { flexDirection: "row", alignItems: "center" },
+  error: { color: "red" },
+  empty: { textAlign: "center", marginTop: 10, fontStyle: "italic" },
   input: {
     borderWidth: 1,
     borderColor: "#ccc",
+    borderRadius: 6,
     padding: 10,
-    marginBottom: 10,
-    borderRadius: 5,
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  itemRow: {
+    borderBottomWidth: 1,
+    borderBottomColor: "#ddd",
+    paddingVertical: 4,
+  },
+  itemText: { fontSize: 14 },
+  date: { fontSize: 12, color: "#555" },
+  columnsWrapper: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  column: {
+    flex: 1,
+    padding: 5,
+    backgroundColor: "#f9f9f9",
+    borderRadius: 8,
+    minHeight: 50,
+  },
+  columnTitle: {
+    fontWeight: "bold",
     fontSize: 16,
+    marginBottom: 6,
+    textAlign: "center",
   },
 });

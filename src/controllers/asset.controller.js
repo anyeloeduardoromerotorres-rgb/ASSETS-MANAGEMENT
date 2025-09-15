@@ -4,7 +4,16 @@ import CloseHistory from "../models/pairHistorical.model.js";
 import { getCandlesWithStats } from "../scripts/fetchHistoricalMaxMin.js";
 import { calculateSlope } from "../scripts/linearRegression.js";
 
-export const getAssets = (req, res) => res.send("getAsset");
+// GET /assets
+export const getAssets = async (req, res) => {
+  try {
+    const assets = await Asset.find(); // trae todos
+    return res.status(200).json(assets); // devolvemos array directamente
+  } catch (err) {
+    console.error("❌ Error al traer assets:", err);
+    res.status(500).json({ message: "Error al traer assets", error: err.message });
+  }
+};
 
 // 📌 Crear un nuevo Asset junto con su historial de cierres
 export const createAsset = async (req, res) => {

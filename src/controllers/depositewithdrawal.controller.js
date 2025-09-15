@@ -1,5 +1,7 @@
-import Depositewithdrawal from "../models/depositewithdrawal.model.js";
+import DepositeWithdrawal from "../models/depositewithdrawal.model.js";
 import axios from "axios";
+
+
 
 const EXCHANGE_API = "https://open.er-api.com/v6/latest/USD"; 
 // 👆 devuelve tasas con USD como base
@@ -40,6 +42,23 @@ export const postDepositeWithdrawal = async (req, res) => {
     res.status(500).json({ error: "Error al guardar transacción" });
   }
 };
+
+
+
+export const getAllDepositeWithdrawals = async (req, res) => {
+  console.log("📥 [API] GET /depositewithdrawal llamado");
+
+  try {
+    const txs = await DepositeWithdrawal.find(); // o tu modelo correcto
+    console.log("📊 Total transacciones encontradas:", txs.length);
+    res.json(txs);
+  } catch (error) {
+    console.error("❌ Error en getAllDepositeWithdrawals:", error);
+    res.status(500).json({ error: "Error al obtener transacciones" });
+  }
+};
+
+
 
 // Obtener transacción por ID
 export const getDepositeWithdrawal = async (req, res) => {
