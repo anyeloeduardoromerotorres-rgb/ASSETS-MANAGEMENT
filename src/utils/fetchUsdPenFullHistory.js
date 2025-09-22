@@ -1,78 +1,84 @@
 import axios from "axios";
-import dotenv from "dotenv";
 
-dotenv.config();
+const USDPEN_YAHOO_SYMBOL = "PEN=X";
+const ONE_DAY_SECONDS = 24 * 60 * 60;
+
+const toNumber = (value, fallback) =>
+  typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
+const buildYahooUrl = startDate => {
+  const base = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+    USDPEN_YAHOO_SYMBOL
+  )}`;
+  const interval = "1d";
+
+  if (!startDate) {
+    return `${base}?interval=${interval}&range=max`;
+  }
+
+  const fromDate = new Date(startDate);
+  if (Number.isNaN(fromDate.getTime())) {
+    return `${base}?interval=${interval}&range=max`;
+  }
+
+  // Avanzamos un día para evitar duplicar la última vela ya almacenada
+  const period1 = Math.floor(fromDate.getTime() / 1000) + ONE_DAY_SECONDS;
+  const period2 = Math.floor(Date.now() / 1000) + ONE_DAY_SECONDS;
+
+  if (period1 >= period2) {
+    return null;
+  }
+
+  return `${base}?interval=${interval}&period1=${period1}&period2=${period2}`;
+};
 
 /**
- * Trae el histórico diario de USD→PEN desde una fecha dada hasta hoy,
- * fragmentando las peticiones en bloques de hasta 365 días.
+ * Trae el histórico diario USD→PEN usando Yahoo Finance.
+ * Yahoo no requiere API key y provee datos desde 2005 aprox.
  *
- * @param {Date} [startDate] - Fecha de inicio (si no se pasa, usa 1999-01-04)
+ * @param {Date} [startDate] - fecha de la última vela conocida (se traerán días posteriores)
  * @returns {Promise<Array<{ closeTime: Date, close: number, high: number, low: number }>>}
  */
 export async function fetchUsdPenFullHistory(startDate) {
-  const url = "https://api.exchangerate.host/timeframe";
-  const apiKey = process.env.EXCHANGERATE_API_KEY;
+  const url = buildYahooUrl(startDate);
 
-  const earliest = new Date("1999-01-04");
-  const today = new Date();
-
-  // 👇 Si no me pasan startDate, asumo earliest (modo full)
-  let start = startDate ? new Date(startDate) : earliest;
-
-  const results = [];
-
-  while (start < today) {
-    // calcular fin del bloque (máximo 365 días)
-    const end = new Date(start);
-    end.setDate(end.getDate() + 364);
-    if (end > today) end.setTime(today.getTime());
-
-    const startStr = start.toISOString().slice(0, 10);
-    const endStr = end.toISOString().slice(0, 10);
-
-    console.log(`📊 Fetching USD→PEN from ${startStr} to ${endStr}`);
-
-    try {
-      const resp = await axios.get(url, {
-        params: {
-          access_key: apiKey,
-          start_date: startStr,
-          end_date: endStr,
-          symbols: "PEN",
-          source: "USD",
-        },
-      });
-
-      if (resp.data && resp.data.success && resp.data.quotes) {
-        for (const [date, obj] of Object.entries(resp.data.quotes)) {
-          if (obj.USDPEN !== undefined) {
-            results.push({
-              closeTime: new Date(date),
-              close: obj.USDPEN,
-              high: obj.USDPEN,
-              low: obj.USDPEN,
-            });
-          }
-        }
-      } else {
-        console.error("❌ Respuesta inesperada:", resp.data);
-        break;
-      }
-    } catch (err) {
-      console.error("❌ Error en request:", err.response?.data || err.message);
-      break;
-    }
-
-    // avanzar el bloque (un día después del último)
-    end.setDate(end.getDate() + 1);
-    start = end;
+  if (!url) {
+    return [];
   }
 
-  // ordenar por fecha ascendente
-  results.sort((a, b) => a.closeTime - b.closeTime);
+  try {
+    const res = await axios.get(url);
+    const result = res.data?.chart?.result?.[0];
 
-  return results;
+    if (!result || !Array.isArray(result.timestamp)) {
+      console.warn("⚠️ Respuesta inesperada al obtener USD→PEN desde Yahoo Finance");
+      return [];
+    }
+
+    const timestamps = result.timestamp;
+    const quote = result.indicators?.quote?.[0] ?? {};
+    const closes = quote.close ?? [];
+    const highs = quote.high ?? [];
+    const lows = quote.low ?? [];
+
+    const candles = timestamps.map((ts, idx) => {
+      const close = toNumber(closes[idx], NaN);
+      if (!Number.isFinite(close)) return null;
+
+      const high = toNumber(highs[idx], close);
+      const low = toNumber(lows[idx], close);
+
+      return {
+        closeTime: new Date(ts * 1000),
+        close,
+        high,
+        low,
+      };
+    });
+
+    return candles.filter(Boolean).sort((a, b) => a.closeTime - b.closeTime);
+  } catch (err) {
+    console.error("❌ Error obteniendo histórico USD→PEN desde Yahoo Finance:", err.message);
+    return [];
+  }
 }
-
-

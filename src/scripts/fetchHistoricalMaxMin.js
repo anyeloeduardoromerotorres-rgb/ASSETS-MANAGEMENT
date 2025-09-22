@@ -56,8 +56,16 @@ export function getHighLowLastYears(candles, years = 7) {
     return { high: null, low: null }; // No hay datos disponibles
   }
 
-  const highs = filtered.map(c => c.high).filter(v => v != null);
-  const lows  = filtered.map(c => c.low).filter(v => v != null);
+  let highs = filtered.map(c => (c.high ?? c.close)).filter(v => v != null && !Number.isNaN(v));
+  let lows  = filtered.map(c => (c.low ?? c.close)).filter(v => v != null && !Number.isNaN(v));
+
+  if (highs.length === 0) {
+    highs = filtered.map(c => c.close).filter(v => v != null && !Number.isNaN(v));
+  }
+
+  if (lows.length === 0) {
+    lows = filtered.map(c => c.close).filter(v => v != null && !Number.isNaN(v));
+  }
 
   const high = highs.length ? Math.max(...highs) : null;
   const low  = lows.length ? Math.min(...lows) : null;

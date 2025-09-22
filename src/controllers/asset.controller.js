@@ -1,6 +1,7 @@
 import Asset from "../models/asset.model.js";
 import Exchange from "../models/exchange.model.js";
 import CloseHistory from "../models/pairHistorical.model.js";
+import ConfigInfo from "../models/configInfo.model.js";
 import { getCandlesWithStats } from "../scripts/fetchHistoricalMaxMin.js";
 import { calculateSlope } from "../scripts/linearRegression.js";
 
@@ -18,28 +19,29 @@ export const getAssets = async (req, res) => {
 // 📌 Crear un nuevo Asset junto con su historial de cierres
 export const createAsset = async (req, res) => {
   try {
+    const { symbol, exchange, initialInvestment, type, currentBalance } = req.body;
 
-    
-    const { symbol, exchange, initialInvestment, type } = req.body;
-    
-
-    // 🔹 Validar exchange (buscar por nombre)
     const exchangeDoc = await Exchange.findOne({ name: exchange });
     if (!exchangeDoc) {
       return res.status(404).json({ error: "Exchange no encontrado" });
     }
-    // 🔹 Obtener velas y estadísticas
+
+    const parsedCurrentBalance = Number(currentBalance);
+    if (!Number.isFinite(parsedCurrentBalance) || parsedCurrentBalance < 0) {
+      return res.status(400).json({ error: "currentBalance inválido" });
+    }
+
     const { candles, high, low } = await getCandlesWithStats(symbol, 7, type);
 
-    // 🔹 Crear Asset (sin base ni quote en el documento)
     const asset = new Asset({
       symbol,
-      exchange: exchangeDoc._id, // 👈 guardamos el ObjectId
-      initialInvestment,       
+      exchange: exchangeDoc._id,
+      initialInvestment,
       maxPriceSevenYear: high,
       minPriceSevenYear: low,
-      slope: null, // lo calculamos luego
-      type
+      slope: null,
+      totalCapitalWhenLastAdded: 200,
+      type,
     });
 
     await asset.save();
@@ -68,6 +70,31 @@ export const createAsset = async (req, res) => {
     asset.slope = slope;
     await asset.save();
 
+    const nonFiatAssets = await Asset.find({ _id: { $ne: asset._id }, type: { $ne: "fiat" } });
+    const totalOtherCapitals = nonFiatAssets.reduce(
+      (sum, doc) => sum + (Number(doc.totalCapitalWhenLastAdded) || 0),
+      0
+    );
+
+    const newAssetCapital = 200;
+    const amountToSplit = parsedCurrentBalance - totalOtherCapitals;
+    const divisor = nonFiatAssets.length;
+    const adjustment = divisor > 0 ? (amountToSplit - newAssetCapital) / divisor : 0;
+
+    await Promise.all(
+      nonFiatAssets.map(async other => {
+        const currentValue = Number(other.totalCapitalWhenLastAdded) || 0;
+        other.totalCapitalWhenLastAdded = currentValue + adjustment;
+        await other.save();
+      })
+    );
+
+    await ConfigInfo.findOneAndUpdate(
+      { name: "TotalUltimoActivoCreado" },
+      { total: parsedCurrentBalance },
+      { upsert: true, new: true }
+    );
+
     res.status(201).json({
       message: "✅ Asset, CloseHistory y slope creados con éxito",
       asset,
@@ -79,5 +106,76 @@ export const createAsset = async (req, res) => {
   }
 };
 
-export const deleteAssets = (req, res) => res.send("deleteAsset");
-export const putAssets = (req, res) => res.send("putAsset");
+export const deleteAssets = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const asset = await Asset.findById(id);
+    if (!asset) {
+      return res.status(404).json({ error: "Asset no encontrado" });
+    }
+
+    await CloseHistory.deleteMany({ symbol: asset._id });
+    await asset.deleteOne();
+
+    return res.json({ message: "Asset eliminado correctamente", assetId: id });
+  } catch (error) {
+    console.error("❌ Error eliminando asset:", error.message);
+    return res.status(500).json({ error: "No se pudo eliminar el asset" });
+  }
+};
+
+export const putAssets = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const asset = await Asset.findById(id);
+
+    if (!asset) {
+      return res.status(404).json({ error: "Asset no encontrado" });
+    }
+
+    let hasUpdates = false;
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "initialInvestment")) {
+      const value = req.body.initialInvestment;
+
+      if (value === null) {
+        asset.initialInvestment = null;
+        hasUpdates = true;
+      } else if (typeof value === "number") {
+        asset.initialInvestment = value;
+        hasUpdates = true;
+      } else if (typeof value === "string") {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) {
+          return res
+            .status(400)
+            .json({ error: "initialInvestment debe ser un número válido" });
+        }
+        asset.initialInvestment = parsed;
+        hasUpdates = true;
+      } else if (typeof value === "object") {
+        asset.initialInvestment = value;
+        asset.markModified("initialInvestment");
+        hasUpdates = true;
+      } else {
+        return res
+          .status(400)
+          .json({ error: "initialInvestment debe ser un número u objeto" });
+      }
+    }
+
+    if (!hasUpdates) {
+      return res
+        .status(400)
+        .json({ error: "No se proporcionaron campos válidos para actualizar" });
+    }
+
+    await asset.save();
+
+    return res.json(asset);
+  } catch (err) {
+    console.error("❌ Error actualizando asset:", err.message);
+    return res.status(500).json({ error: "No se pudo actualizar el asset" });
+  }
+};

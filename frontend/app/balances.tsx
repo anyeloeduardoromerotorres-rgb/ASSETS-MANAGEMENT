@@ -27,6 +27,11 @@ type AssetFromDB = {
   initialInvestment?: number | Record<string, number>;
 };
 
+type StockHolding = {
+  asset: string;
+  total: number; // unidades (acciones) guardadas en la base
+};
+
 export default function BalancesScreen() {
   const [balances, setBalances] = useState<Balance[]>([]);
   const [totals, setTotals] = useState<Totals>({ usd: 0, pen: 0 });
@@ -34,7 +39,7 @@ export default function BalancesScreen() {
   const wsRef = useRef<WebSocket | null>(null);
   const listenKeyRef = useRef<string | null>(null);
   const [penPrice, setPenPrice] = useState<number | null>(null);
-  const [assets, setAssets] = useState<Balance[]>([]);
+  const [stockHoldings, setStockHoldings] = useState<StockHolding[]>([]);
   const [vooPrice, setVooPrice] = useState<number | null>(null);
 
   const fetchBalances = async () => {
@@ -128,7 +133,7 @@ export default function BalancesScreen() {
 
       const stocks = res.data.filter((a: AssetFromDB) => a.type === "stock");
 
-      const stockBalances: Balance[] = stocks.map((stock: AssetFromDB) => {
+      const holdings: StockHolding[] = stocks.map((stock: AssetFromDB) => {
         let amount = 0;
         if (typeof stock.initialInvestment === "number") {
           amount = stock.initialInvestment;
@@ -140,21 +145,14 @@ export default function BalancesScreen() {
           }
         }
 
-        // Si es VOO y tenemos precio, calculamos valor en USD
-        const usdValue =
-          stock.symbol === "VOO" && vooPrice
-            ? amount * vooPrice
-            : amount;
-
         return {
           asset: stock.symbol,
           total: amount,
-          usdValue,
         };
       });
 
-      console.log("📊 StockBalances calculados:", stockBalances);
-      setAssets(stockBalances);
+      console.log("📊 Stock holdings cargados:", holdings);
+      setStockHoldings(holdings);
     } catch (err) {
       console.error("❌ Error al traer assets:", err);
     }
@@ -179,9 +177,26 @@ export default function BalancesScreen() {
     };
   }, [vooPrice]); // 👈 se vuelve a ejecutar cuando tenemos precio de VOO
 
+  const stockBalances: Balance[] = stockHoldings.map((holding) => {
+    const isVoo = holding.asset === "VOO";
+    const hasPrice = typeof vooPrice === "number";
+
+    const usdValue = isVoo
+      ? hasPrice
+        ? holding.total * (vooPrice as number)
+        : holding.total
+      : holding.total;
+
+    return {
+      asset: holding.asset,
+      total: holding.total,
+      usdValue,
+    };
+  });
+
   const extendedBalances: Balance[] = [
     ...balances,
-    ...assets,
+    ...stockBalances,
     { asset: "USD", total: totals.usd, usdValue: totals.usd },
     {
       asset: "PEN",

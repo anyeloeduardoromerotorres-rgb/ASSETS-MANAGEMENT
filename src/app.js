@@ -8,6 +8,7 @@ import exchange from './routes/exchange.route.js'
 import quoteRoutes from "./routes/quote.route.js";
 import binanceRoutes from "./routes/binance.routes.js";
 import configInfoRoutes from "./routes/configInfo.route.js";
+import transactionRoutes from "./routes/transaction.route.js";
 
 const app = express();
 
@@ -25,6 +26,7 @@ app.use('/api', exchange)
 // Rutas de Quotes
 app.use("/api", quoteRoutes);
 app.use("/api/binance", binanceRoutes);
+app.use("/api/transactions", transactionRoutes);
 
 
 

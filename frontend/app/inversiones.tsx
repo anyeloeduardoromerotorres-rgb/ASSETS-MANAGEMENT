@@ -10,7 +10,7 @@ import {
   ScrollView,
 } from "react-native";
 import { Picker } from "@react-native-picker/picker";
-import { INITIAL_CAPITAL } from "../constants/config";
+import { CONFIG_INFO_INITIAL_ID } from "../constants/config";
 import api from "../constants/api";
 
 type Investment = {
@@ -29,21 +29,39 @@ export default function InversionesScreen() {
   const [investments, setInvestments] = useState<Investment[] | null>(null);
   const [loadingInvestments, setLoadingInvestments] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [initialCapital, setInitialCapital] = useState<number | null>(null);
 
   useEffect(() => {
+    fetchInitialCapital();
     fetchInvestments();
   }, []);
 
   const totalCapital = useMemo(() => {
-    if (!investments) return INITIAL_CAPITAL;
+    if (initialCapital === null) return null;
+    if (!investments) return initialCapital;
     const deposits = investments
       .filter((inv) => inv.transaction === "Deposito")
       .reduce((acc, inv) => acc + Number(inv.quantity), 0);
     const withdrawals = investments
       .filter((inv) => inv.transaction === "Retiro")
       .reduce((acc, inv) => acc + Number(inv.quantity), 0);
-    return INITIAL_CAPITAL + deposits - withdrawals;
-  }, [investments]);
+    return initialCapital + deposits - withdrawals;
+  }, [initialCapital, investments]);
+
+  const fetchInitialCapital = async () => {
+    try {
+      const res = await api.get(`/config-info/${CONFIG_INFO_INITIAL_ID}`);
+      const total = Number(res.data?.total);
+      if (!isNaN(total)) {
+        setInitialCapital(total);
+      } else {
+        setInitialCapital(0);
+      }
+    } catch (err) {
+      console.error("Error al obtener capital inicial:", err);
+      setInitialCapital(0);
+    }
+  };
 
   const handleAdd = async () => {
     if (!amount || isNaN(Number(amount))) {
@@ -89,8 +107,12 @@ export default function InversionesScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>📊 Inversiones</Text>
-      <Text style={styles.capital}>Capital inicial: ${INITIAL_CAPITAL.toFixed(2)}</Text>
-      <Text style={styles.totalCapital}>Capital total: ${totalCapital.toFixed(2)}</Text>
+      <Text style={styles.capital}>
+        Capital inicial: {initialCapital !== null ? `$${initialCapital.toFixed(2)}` : "Cargando..."}
+      </Text>
+      <Text style={styles.totalCapital}>
+        Capital total: {totalCapital !== null ? `$${totalCapital.toFixed(2)}` : "Cargando..."}
+      </Text>
 
       {mode === null ? (
         <>

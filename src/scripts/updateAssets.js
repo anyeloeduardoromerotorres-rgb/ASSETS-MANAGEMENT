@@ -18,26 +18,29 @@ export async function updateAssetCandles(assetId) {
     // 2️⃣ Ver última fecha que tienes guardada
     const lastClose = history.historicalData[0]?.candles.at(-1)?.closeTime || null;
 
+    let upToDate = false;
     if (asset.symbol !== "USDTUSD") {
       if (!lastClose) {
         console.log(`⚠️ No hay velas guardadas aún para ${asset.symbol}, descargando todo...`);
       } else {
-        // fecha de la última vela que deberíamos tener (ayer UTC)
         const todayUtc = new Date();
-        const yesterdayUtc = new Date(Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth(), todayUtc.getUTCDate() - 1));
+        const yesterdayUtc = new Date(
+          Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth(), todayUtc.getUTCDate() - 1)
+        );
 
         if (new Date(lastClose).getTime() >= yesterdayUtc.getTime()) {
           console.log(`✅ ${asset.symbol} ya está actualizado hasta la última vela diaria`);
-          return;
+          upToDate = true;
         }
       }
     }
 
     let newCandles = [];
+    let forceRecalculate = false;
 
     // 3️⃣ Descargar nuevas velas según tipo
     if (asset.type === "fiat" && asset.symbol === "USDPEN") {
-      // 🔹 USDPEN: exchangerate.host
+      // 🔹 USDPEN: histórico diario desde Yahoo Finance
       const startDate = lastClose ? new Date(lastClose) : undefined;
       const historyData = await fetchUsdPenFullHistory(startDate);
 
@@ -62,39 +65,74 @@ export async function updateAssetCandles(assetId) {
         : allCandles;
 
       console.log(`📊 ${asset.symbol}: ${newCandles.length} velas nuevas desde Yahoo Finance`);
+    } else if (asset.type === "commodity") {
+      // 🔹 Commodities: Yahoo Finance (o símbolo equivalente)
+      const allCandles = await getStockHistory(asset.symbol);
+
+      newCandles = lastClose
+        ? allCandles.filter(c => new Date(c.closeTime) > new Date(lastClose))
+        : allCandles;
+
+      console.log(`📊 ${asset.symbol}: ${newCandles.length} velas nuevas (commodity)`);
     } else if (asset.type === "fiat" && asset.symbol === "USDTUSD") {
-      // 🔹 USDTUSD: lo dejamos fijo en 1
-      console.log(`✅ ${asset.symbol}: es par estable, no requiere actualización de velas`);
-      return;
+      // 🔹 USDTUSD: las velas se alimentan desde la app (config info)
+      console.log(
+        `ℹ️ ${asset.symbol}: se utilizarán las velas existentes del historial para recalcular métricas`
+      );
+      upToDate = true;
+      forceRecalculate = true;
     } else {
       console.log(`⚠️ ${asset.symbol}: tipo de asset no soportado`);
       return;
     }
 
+    let savedCandles = false;
+
     // 4️⃣ Guardar nuevas velas
     if (newCandles.length > 0) {
       history.historicalData[0].candles.push(...newCandles);
       await history.save();
-
-      // 5️⃣ Recalcular high/low últimos 7 años
-      const { high, low } = getHighLowLastYears(history.historicalData[0].candles, 7);
-
-      let updated = false;
-
-      if (high > asset.maxPriceSevenYear) {
-        asset.maxPriceSevenYear = high;
-        updated = true;
+      savedCandles = true;
+      console.log(`🔄 ${asset.symbol} actualizado con ${newCandles.length} velas nuevas`);
+    } else {
+      if (!upToDate) {
+        console.log(`✅ No hay nuevas velas para ${asset.symbol}`);
       }
+    }
 
-      const sevenYearsAgo = Date.now() - 7 * 365 * 24 * 60 * 60 * 1000;
-      const oldestCandle = history.historicalData[0].candles[0].closeTime;
+    const allCandles = history.historicalData[0]?.candles ?? [];
 
-      if (new Date(oldestCandle).getTime() <= sevenYearsAgo && low < asset.minPriceSevenYear) {
-        asset.minPriceSevenYear = low;
-        updated = true;
-      }
+    if (allCandles.length === 0) {
+      console.warn(`⚠️ ${asset.symbol}: no se encontraron velas en historial para calcular high/low`);
+      return;
+    }
 
-      // 6️⃣ Recalcular slope anualizado
+    // 5️⃣ Recalcular high/low últimos 7 años
+    const { high, low } = getHighLowLastYears(allCandles, 7);
+
+    let updated = false;
+
+    if (high != null && (asset.maxPriceSevenYear == null || high > asset.maxPriceSevenYear)) {
+      asset.maxPriceSevenYear = high;
+      updated = true;
+    }
+
+    const rawOldest = allCandles[0]?.closeTime ?? null;
+    const oldestCandle =
+      rawOldest instanceof Date ? rawOldest : rawOldest ? new Date(rawOldest) : null;
+    const sevenYearsAgo = Date.now() - 7 * 365 * 24 * 60 * 60 * 1000;
+    const hasSevenYears = oldestCandle ? oldestCandle.getTime() <= sevenYearsAgo : false;
+
+    if (
+      low != null &&
+      (asset.minPriceSevenYear == null || (hasSevenYears && low < asset.minPriceSevenYear))
+    ) {
+      asset.minPriceSevenYear = low;
+      updated = true;
+    }
+
+    // 6️⃣ Recalcular slope anualizado cuando hay nuevas velas o no existe aún
+    if (savedCandles || forceRecalculate || asset.slope == null) {
       try {
         const slope = await calculateSlope(asset._id);
         asset.slope = parseFloat(slope.toFixed(2)); // 🔹 redondeado a 2 decimales
@@ -103,16 +141,12 @@ export async function updateAssetCandles(assetId) {
       } catch (err) {
         console.error(`❌ Error calculando slope para ${asset.symbol}:`, err.message);
       }
+    }
 
-      if (updated) await asset.save();
-
-      console.log(`🔄 ${asset.symbol} actualizado con ${newCandles.length} velas nuevas`);
-    } else {
-      console.log(`✅ No hay nuevas velas para ${asset.symbol}`);
+    if (updated) {
+      await asset.save();
     }
   } catch (err) {
     console.error("❌ Error en updateAssetCandles:", err.message);
   }
 }
-
-

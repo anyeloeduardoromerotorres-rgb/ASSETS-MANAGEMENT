@@ -1,2 +1,2 @@
 // constants/config.ts
-export const INITIAL_CAPITAL = 1723.90945471811;
+export const CONFIG_INFO_INITIAL_ID = "68c7955b5b8d3693b916d59a";
