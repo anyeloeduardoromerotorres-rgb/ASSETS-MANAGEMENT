@@ -1,5 +1,5 @@
 // binanceUtils.js
-import crypto from "crypto";
+import crypto from "node:crypto";
 import dotenv from "dotenv";
 import Exchange from "../models/exchange.model.js";
 
