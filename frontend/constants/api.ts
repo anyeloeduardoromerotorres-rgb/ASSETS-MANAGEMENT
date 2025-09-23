@@ -1,7 +1,11 @@
 import axios from "axios";
 
 // Backend público desplegado en el VPS
-const API_BASE_URL = "http://195.133.93.48:3000/api";
+const API_BASE_URL = __DEV__
+  ? "https://hbsjajakwksnsj.duckdns.org/api"
+  : "https://hbsjajakwksnsj.duckdns.org/api";
+
+
 
 
 const api = axios.create({

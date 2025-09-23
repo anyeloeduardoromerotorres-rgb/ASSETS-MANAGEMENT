@@ -1,4 +1,5 @@
 import DepositeWithdrawal from "../models/depositewithdrawal.model.js";
+const Depositewithdrawal = DepositeWithdrawal;
 import axios from "axios";
 
 
@@ -30,7 +31,7 @@ export const postDepositeWithdrawal = async (req, res) => {
       finalQuantity = finalQuantity / penRate;
     }
 
-    const newTx = new Depositewithdrawal({
+    const newTx = new DepositeWithdrawal({
       transaction,
       quantity: finalQuantity, // 👈 siempre guardamos en USD
     });
@@ -64,7 +65,7 @@ export const getAllDepositeWithdrawals = async (req, res) => {
 export const getDepositeWithdrawal = async (req, res) => {
   try {
     const { id } = req.params;
-    const tx = await Depositewithdrawal.findById(id);
+    const tx = await DepositeWithdrawal.findById(id);
 
     if (!tx) return res.status(404).json({ error: "Transacción no encontrada" });
 
@@ -79,7 +80,7 @@ export const getDepositeWithdrawal = async (req, res) => {
 export const deleteDepositeWithdrawal = async (req, res) => {
   try {
     const { id } = req.params;
-    await Depositewithdrawal.findByIdAndDelete(id);
+    await DepositeWithdrawal.findByIdAndDelete(id);
     res.json({ success: true });
   } catch (error) {
     console.error(error);
@@ -103,7 +104,7 @@ export const putDepositeWithdrawal = async (req, res) => {
       finalQuantity = finalQuantity / data.rates.PEN;
     }
 
-    const updatedTx = await Depositewithdrawal.findByIdAndUpdate(
+     const updatedTx = await DepositeWithdrawal.findByIdAndUpdate(
       id,
       { transaction, quantity: finalQuantity },
       { new: true }

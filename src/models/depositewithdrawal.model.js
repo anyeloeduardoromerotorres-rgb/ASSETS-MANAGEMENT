@@ -1,16 +1,16 @@
 import mongoose from "mongoose";
 
-const depositewithdrawal = new mongoose.Schema ({
+const DepositeWithdrawal = new mongoose.Schema ({
     transaction:{
         type: String,
-        require: true,
+        required: true,
         enum: ["Deposito", "Retiro"]
     },
     quantity:{
         type: Number,
-        require: true,
+        required: true,
         trim: true
     }
 }, { timestamps: true })
 
-export default mongoose.model('Depositewithdrawal', depositewithdrawal)
+export default mongoose.model('DepositeWithdrawal', DepositeWithdrawal)
