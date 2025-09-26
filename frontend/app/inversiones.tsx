@@ -8,6 +8,7 @@ import {
   Alert,
   ActivityIndicator,
   ScrollView,
+  TouchableOpacity,
 } from "react-native";
 import { Picker } from "@react-native-picker/picker";
 import { CONFIG_INFO_INITIAL_ID } from "../constants/config";
@@ -25,6 +26,7 @@ export default function InversionesScreen() {
   const [mode, setMode] = useState<"deposit" | "withdraw" | null>(null);
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<"USD" | "PEN">("USD");
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const [investments, setInvestments] = useState<Investment[] | null>(null);
   const [loadingInvestments, setLoadingInvestments] = useState(false);
@@ -63,6 +65,32 @@ export default function InversionesScreen() {
     }
   };
 
+  const handleUpdate = async () => {
+    if (!editingId) return;
+    if (!amount || isNaN(Number(amount))) {
+      Alert.alert("Error", "Por favor ingresa un número válido.");
+      return;
+    }
+    try {
+      await api.put(`/depositewithdrawal/${editingId}`,
+        {
+          transaction: mode === "deposit" ? "Deposito" : "Retiro",
+          quantity: Number(amount),
+          currency,
+        }
+      );
+      Alert.alert("Éxito", "Transacción actualizada");
+      await fetchInvestments();
+    } catch (err: any) {
+      console.error("Error actualizando transacción:", err);
+      Alert.alert("Error", err?.response?.data?.error ?? "No se pudo actualizar la transacción");
+    }
+    setAmount("");
+    setCurrency("USD");
+    setMode(null);
+    setEditingId(null);
+  };
+
   const handleAdd = async () => {
     if (!amount || isNaN(Number(amount))) {
       Alert.alert("Error", "Por favor ingresa un número válido.");
@@ -86,6 +114,7 @@ export default function InversionesScreen() {
     setAmount("");
     setCurrency("USD");
     setMode(null);
+    setEditingId(null);
   };
 
   const fetchInvestments = async () => {
@@ -102,6 +131,37 @@ export default function InversionesScreen() {
     } finally {
       setLoadingInvestments(false);
     }
+  };
+
+  const startEdit = (inv: Investment) => {
+    setEditingId(inv._id ?? null);
+    setMode(inv.transaction === "Deposito" ? "deposit" : "withdraw");
+    setAmount(String(inv.quantity ?? ""));
+    setCurrency((inv.currency as any) ?? "USD");
+  };
+
+  const handleDelete = async (inv: Investment) => {
+    if (!inv._id) return;
+    Alert.alert(
+      "Confirmar",
+      "¿Deseas eliminar esta transacción?",
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Eliminar",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await api.delete(`/depositewithdrawal/${inv._id}`);
+              await fetchInvestments();
+            } catch (err: any) {
+              console.error("Error eliminando transacción:", err);
+              Alert.alert("Error", err?.response?.data?.error ?? "No se pudo eliminar");
+            }
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -149,14 +209,24 @@ export default function InversionesScreen() {
                       .filter((inv) => inv.transaction === "Deposito")
                       .map((inv, idx) => (
                         <View key={inv._id ?? `dep-${idx}`} style={styles.itemRow}>
-                          <Text style={styles.itemText}>
-                            {inv.currency ?? "USD"} {Number(inv.quantity).toFixed(2)}
-                          </Text>
-                          {inv.createdAt && (
-                            <Text style={styles.date}>
-                              {new Date(inv.createdAt).toLocaleString()}
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.itemText}>
+                              {inv.currency ?? "USD"} {Number(inv.quantity).toFixed(2)}
                             </Text>
-                          )}
+                            {inv.createdAt && (
+                              <Text style={styles.date}>
+                                {new Date(inv.createdAt).toLocaleString()}
+                              </Text>
+                            )}
+                          </View>
+                          <View style={styles.actions}>
+                            <TouchableOpacity onPress={() => startEdit(inv)}>
+                              <Text style={styles.actionIcon}>✏️</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => handleDelete(inv)}>
+                              <Text style={[styles.actionIcon, { marginLeft: 8 }]}>🗑️</Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       ))}
                   </View>
@@ -168,14 +238,24 @@ export default function InversionesScreen() {
                       .filter((inv) => inv.transaction === "Retiro")
                       .map((inv, idx) => (
                         <View key={inv._id ?? `ret-${idx}`} style={styles.itemRow}>
-                          <Text style={styles.itemText}>
-                            {inv.currency ?? "USD"} {Number(inv.quantity).toFixed(2)}
-                          </Text>
-                          {inv.createdAt && (
-                            <Text style={styles.date}>
-                              {new Date(inv.createdAt).toLocaleString()}
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.itemText}>
+                              {inv.currency ?? "USD"} {Number(inv.quantity).toFixed(2)}
                             </Text>
-                          )}
+                            {inv.createdAt && (
+                              <Text style={styles.date}>
+                                {new Date(inv.createdAt).toLocaleString()}
+                              </Text>
+                            )}
+                          </View>
+                          <View style={styles.actions}>
+                            <TouchableOpacity onPress={() => startEdit(inv)}>
+                              <Text style={styles.actionIcon}>✏️</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => handleDelete(inv)}>
+                              <Text style={[styles.actionIcon, { marginLeft: 8 }]}>🗑️</Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       ))}
                   </View>
@@ -187,7 +267,11 @@ export default function InversionesScreen() {
       ) : (
         <View>
           <Text style={{ fontSize: 16, fontWeight: "bold", marginBottom: 8 }}>
-            {mode === "deposit" ? "Nuevo Depósito" : "Nuevo Retiro"}
+            {editingId
+              ? `Editar ${mode === "deposit" ? "Depósito" : "Retiro"}`
+              : mode === "deposit"
+              ? "Nuevo Depósito"
+              : "Nuevo Retiro"}
           </Text>
           <TextInput
             style={styles.input}
@@ -200,8 +284,17 @@ export default function InversionesScreen() {
             <Picker.Item label="USD" value="USD" />
             <Picker.Item label="PEN" value="PEN" />
           </Picker>
-          <Button title="Guardar" onPress={handleAdd} />
-          <Button title="Cancelar" color="gray" onPress={() => setMode(null)} />
+          <Button title={editingId ? "Actualizar" : "Guardar"} onPress={editingId ? handleUpdate : handleAdd} />
+          <Button
+            title="Cancelar"
+            color="gray"
+            onPress={() => {
+              setMode(null);
+              setEditingId(null);
+              setAmount("");
+              setCurrency("USD");
+            }}
+          />
         </View>
       )}
     </View>
@@ -229,7 +322,9 @@ const styles = StyleSheet.create({
   itemRow: {
     borderBottomWidth: 1,
     borderBottomColor: "#ddd",
-    paddingVertical: 4,
+    paddingVertical: 6,
+    flexDirection: "row",
+    alignItems: "center",
   },
   itemText: { fontSize: 14 },
   date: { fontSize: 12, color: "#555" },
@@ -237,6 +332,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     gap: 10,
+  },
+  actions: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: 8,
+  },
+  actionIcon: {
+    fontSize: 16,
   },
   column: {
     flex: 1,

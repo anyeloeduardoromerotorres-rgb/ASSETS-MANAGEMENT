@@ -70,10 +70,13 @@ export default function PrediccionScreen() {
         // 2️⃣ Traer depósitos y retiros
         const resFlows = await api.get("/depositewithdrawal");
         const flowsData: any[] = Array.isArray(resFlows.data) ? resFlows.data : [];
-        const depositosRetiros: CashFlow[] = flowsData.map((cf: any) => ({
-          amount: cf.transaction === "retiro" ? Math.abs(cf.quantity) : -Math.abs(cf.quantity),
-          when: new Date(cf.createdAt),
-        }));
+        const depositosRetiros: CashFlow[] = flowsData.map((cf: any) => {
+          const kind = String(cf.transaction || '').toLowerCase();
+          const isWithdrawal = kind === 'retiro';
+          const amt = Math.abs(Number(cf.quantity || 0));
+          const when = new Date(cf.createdAt);
+          return { amount: isWithdrawal ? Math.abs(amt) : -Math.abs(amt), when };
+        });
 
         // 3️⃣ Preparar cashflows
         const flows = [inversionInicial, ...depositosRetiros];
@@ -95,7 +98,6 @@ export default function PrediccionScreen() {
           penRatePromise,
           vooPricePromise,
         ]);
-
         const balances: Balance[] = resBalances.data.balances;
         const totals: Totals = resBalances.data.totals;
         const assetsData = Array.isArray(resAssets.data) ? resAssets.data : [];
@@ -115,7 +117,8 @@ export default function PrediccionScreen() {
             }
 
             if (asset.symbol === "VOO" && typeof vooPrice === "number") {
-              return acc + amount * vooPrice;
+              const val = amount * vooPrice;
+              return acc + val;
             }
 
             return acc + amount;
@@ -128,7 +131,7 @@ export default function PrediccionScreen() {
           stockUsd;
         setTotalUsd(totalUSD);
 
-        // 5️⃣ Determinar si usamos CAGR o XIRR
+        // 5️⃣ Calcular rentabilidad (XIRR con flujo final; fallback a CAGR)
         const entradas = flows.filter(f => f.amount < 0).length;
         const salidas = flows.filter(f => f.amount > 0).length;
 
@@ -140,9 +143,15 @@ export default function PrediccionScreen() {
           .reduce((acc, f) => acc + f.amount, 0);
         const retiroPct = totalDepositos > 0 ? totalRetiros / totalDepositos : 0;
         setWithdrawPercentage(retiroPct);
+        // Agregamos flujo final con el valor actual de la cartera para poder calcular XIRR a hoy
+        const flowsForXirr = [
+          ...flows,
+          { amount: totalUSD, when: new Date() },
+        ];
+        let xirrResult = computeXIRR(flowsForXirr);
 
-        if (entradas < 1 || salidas < 1) {
-          // CAGR
+        if (xirrResult == null) {
+          // Fallback a CAGR si no converge
           const startValue = Math.abs(inversionInicial.amount);
           const endValue = totalUSD;
           const startDate = inversionInicial.when;
@@ -150,10 +159,10 @@ export default function PrediccionScreen() {
           const years = (endDate.getTime() - startDate.getTime()) / (365 * 24 * 3600 * 1000);
           const cagr = Math.pow(endValue / startValue, 1 / years) - 1;
           setXirr(cagr);
+          console.log('[Predicción] Método: CAGR | Valor:', `${(cagr * 100).toFixed(2)}%`);
         } else {
-          // XIRR
-          const xirrResult = computeXIRR(flows);
           setXirr(xirrResult);
+          console.log('[Predicción] Método: XIRR | Valor:', `${(xirrResult * 100).toFixed(2)}%`);
         }
       } catch (err) {
       console.error("❌ Error fetching data:", err);

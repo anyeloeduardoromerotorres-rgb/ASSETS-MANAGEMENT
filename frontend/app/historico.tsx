@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   RefreshControl,
 } from "react-native";
 import api from "../constants/api";
+import { useFocusEffect } from "@react-navigation/native";
 
 type TransactionDoc = {
   _id: string;
@@ -128,6 +129,13 @@ export default function HistoricoScreen() {
   useEffect(() => {
     loadTransactions();
   }, []);
+
+  // Refrescar al enfocar la pantalla
+  useFocusEffect(
+    useCallback(() => {
+      loadTransactions();
+    }, [])
+  );
 
   useEffect(() => {
     const fetchPenRate = async () => {

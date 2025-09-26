@@ -103,6 +103,8 @@ export default function Index() {
   const [penConfig, setPenConfig] = useState<ConfigDoc | null>(null);
   const [usdtBuyConfig, setUsdtBuyConfig] = useState<ConfigDoc | null>(null);
   const [usdtSellConfig, setUsdtSellConfig] = useState<ConfigDoc | null>(null);
+  const [etoroConfig, setEtoroConfig] = useState<ConfigDoc | null>(null);
+  const [totalUsdConfig, setTotalUsdConfig] = useState<ConfigDoc | null>(null);
   const [assets, setAssets] = useState<AssetDoc[]>([]);
   const [lastCreatedAssetTotal, setLastCreatedAssetTotal] = useState<number | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
@@ -117,6 +119,7 @@ export default function Index() {
   const [penInput, setPenInput] = useState("");
   const [usdtBuyInput, setUsdtBuyInput] = useState("");
   const [usdtSellInput, setUsdtSellInput] = useState("");
+  const [etoroUsdInput, setEtoroUsdInput] = useState("");
   const [showAddAssetOptions, setShowAddAssetOptions] = useState(false);
   const [showCryptoSelector, setShowCryptoSelector] = useState(false);
   const [cryptoSymbols, setCryptoSymbols] = useState<string[]>([]);
@@ -139,6 +142,7 @@ export default function Index() {
   const [savingUsd, setSavingUsd] = useState(false);
   const [savingPen, setSavingPen] = useState(false);
   const [savingUsdt, setSavingUsdt] = useState(false);
+  const [savingEtoro, setSavingEtoro] = useState(false);
 
   useEffect(() => {
     const fetchConfig = async () => {
@@ -152,17 +156,32 @@ export default function Index() {
         const assetsData = Array.isArray(assetsRes.data) ? assetsRes.data : [];
         setAssets(assetsData);
 
-        const usdDoc = configData.find(doc => doc?.name === "totalUSD") ?? null;
+        // Buscar docs específicos para BCP, Etoro y Total USD (sumatoria)
+        const usdDoc = configData.find(doc => doc?.name === "totalUSDBCP") ?? null;
+        const etoroDoc = configData.find(doc => doc?.name === "totalUSDEtoro") ?? null;
+        const totalUsdDoc = configData.find(doc => doc?.name === "totalUSD") ?? null;
         const penDoc =
           configData.find(doc => doc?.name === "totalPEN" || doc?.name === "totalPen") ??
           null;
         const buyDoc = findConfigByNames(configData, ["lastPriceUsdtBuy", "PrecioCompraUSDT"]);
-        const sellDoc = findConfigByNames(configData, ["lastPriceUsdtSell", "PrecioVentaUSDT"]);
+        // Leer específicamente del documento con name === "PrecioVentaUSDT"
+        const sellDoc = configData.find(doc => doc?.name === "PrecioVentaUSDT") ?? null;
         const lastCreatedDoc = configData.find(doc => doc?.name === "TotalUltimoActivoCreado") ?? null;
 
         if (usdDoc) {
           setUsdConfig(usdDoc);
           setUsdInput(formatNumber(usdDoc.total));
+        }
+        if (etoroDoc) {
+          setEtoroConfig(etoroDoc);
+          setEtoroUsdInput(formatNumber(etoroDoc.total));
+        } else {
+          setEtoroUsdInput("");
+        }
+        if (totalUsdDoc) {
+          setTotalUsdConfig(totalUsdDoc);
+        } else {
+          setTotalUsdConfig(null);
         }
         if (penDoc) {
           setPenConfig(penDoc);
@@ -260,11 +279,14 @@ export default function Index() {
   }, [assets]);
 
   const parsedUsd = useMemo(() => parseInput(usdInput), [usdInput]);
+  const parsedEtoroUsd = useMemo(() => parseInput(etoroUsdInput), [etoroUsdInput]);
   const parsedPen = useMemo(() => parseInput(penInput), [penInput]);
   const parsedBuy = useMemo(() => parseInput(usdtBuyInput), [usdtBuyInput]);
   const parsedSell = useMemo(() => parseInput(usdtSellInput), [usdtSellInput]);
   const canSaveUsd =
     !!usdConfig && !savingUsd && !Number.isNaN(parsedUsd) && parsedUsd !== usdConfig.total;
+  const canSaveEtoro =
+    !!etoroConfig && !savingEtoro && !Number.isNaN(parsedEtoroUsd) && parsedEtoroUsd !== etoroConfig.total;
   const canSavePen =
     !!penConfig && !savingPen && !Number.isNaN(parsedPen) && parsedPen !== penConfig.total;
   const canSaveUsdt =
@@ -508,6 +530,66 @@ export default function Index() {
       setFeedback("No se pudieron guardar los precios USDT.");
     } finally {
       setSavingUsdt(false);
+    }
+  };
+
+  // Guarda BCP y actualiza totalUSD = BCP + Etoro
+  const saveBcpUsd = async () => {
+    if (!usdConfig || Number.isNaN(parsedUsd)) return;
+    try {
+      setSavingUsd(true);
+      // 1) Guardar BCP
+      await api.put(`/config-info/${usdConfig._id}`, { total: parsedUsd });
+      const updatedBcp = { ...usdConfig, total: parsedUsd };
+      setUsdConfig(updatedBcp);
+      setUsdInput(formatNumber(parsedUsd));
+
+      // 2) Recalcular totalUSD
+      const other = Number.isNaN(parsedEtoroUsd)
+        ? (etoroConfig?.total ?? 0)
+        : parsedEtoroUsd;
+      const sum = parsedUsd + other;
+      if (totalUsdConfig?._id) {
+        await api.put(`/config-info/${totalUsdConfig._id}`, { total: sum });
+        setTotalUsdConfig({ ...totalUsdConfig, total: sum });
+      }
+
+      setFeedback("Total USD (BCP) guardado y totalUSD actualizado.");
+    } catch (err) {
+      console.error("❌ Error guardando Total USD BCP:", err);
+      setFeedback("No se pudo guardar Total USD BCP.");
+    } finally {
+      setSavingUsd(false);
+    }
+  };
+
+  // Guarda Etoro y actualiza totalUSD = BCP + Etoro
+  const saveEtoroUsd = async () => {
+    if (!etoroConfig || Number.isNaN(parsedEtoroUsd)) return;
+    try {
+      setSavingEtoro(true);
+      // 1) Guardar Etoro
+      await api.put(`/config-info/${etoroConfig._id}`, { total: parsedEtoroUsd });
+      const updatedEtoro = { ...etoroConfig, total: parsedEtoroUsd };
+      setEtoroConfig(updatedEtoro);
+      setEtoroUsdInput(formatNumber(parsedEtoroUsd));
+
+      // 2) Recalcular totalUSD
+      const other = Number.isNaN(parsedUsd)
+        ? (usdConfig?.total ?? 0)
+        : parsedUsd;
+      const sum = other + parsedEtoroUsd;
+      if (totalUsdConfig?._id) {
+        await api.put(`/config-info/${totalUsdConfig._id}`, { total: sum });
+        setTotalUsdConfig({ ...totalUsdConfig, total: sum });
+      }
+
+      setFeedback("Total USD (Etoro) guardado y totalUSD actualizado.");
+    } catch (err) {
+      console.error("❌ Error guardando Total USD Etoro:", err);
+      setFeedback("No se pudo guardar Total USD Etoro.");
+    } finally {
+      setSavingEtoro(false);
     }
   };
 
@@ -1034,34 +1116,42 @@ export default function Index() {
               </View>
             )}
 
-            <View style={styles.section}>
-              <View style={styles.card}>
-                <Text style={styles.label}>Total USD</Text>
+            <View style={styles.row}>
+              <View style={[styles.card, styles.halfCard]}>
+                <Text style={styles.label}>Total USD en BCP</Text>
                 <TextInput
                   style={styles.input}
                   value={usdInput}
                   onChangeText={setUsdInput}
-                keyboardType="numeric"
-                placeholder="Ingrese total en USD"
-                onFocus={() => handleFocusValue(usdConfig?.total, usdInput, setUsdInput)}
-              />
-              {canSaveUsd && (
-                <Button
-                  title={savingUsd ? "Guardando..." : "Guardar"}
-                  onPress={() =>
-                    saveValue(
-                      usdConfig,
-                      parsedUsd,
-                      updated => setUsdConfig(updated),
-                      setUsdInput,
-                      setSavingUsd,
-                      "Total USD guardado correctamente.",
-                      "No se pudo guardar Total USD."
-                    )
-                  }
-                  disabled={savingUsd}
+                  keyboardType="numeric"
+                  placeholder="Ingrese total en USD (BCP)"
+                  onFocus={() => handleFocusValue(usdConfig?.total, usdInput, setUsdInput)}
                 />
-              )}
+                {canSaveUsd && (
+                  <Button
+                    title={savingUsd ? "Guardando..." : "Guardar"}
+                    onPress={saveBcpUsd}
+                    disabled={savingUsd}
+                  />
+                )}
+              </View>
+
+              <View style={[styles.card, styles.halfCard]}>
+                <Text style={styles.label}>Total USD en Etoro</Text>
+                <TextInput
+                  style={styles.input}
+                  value={etoroUsdInput}
+                  onChangeText={setEtoroUsdInput}
+                  keyboardType="numeric"
+                  placeholder="Ingrese total en USD (Etoro)"
+                />
+                {canSaveEtoro && (
+                  <Button
+                    title={savingEtoro ? "Guardando..." : "Guardar"}
+                    onPress={saveEtoroUsd}
+                    disabled={savingEtoro}
+                  />
+                )}
               </View>
             </View>
 

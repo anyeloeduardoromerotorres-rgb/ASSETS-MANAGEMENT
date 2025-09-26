@@ -763,6 +763,8 @@ export default function TransaccionesScreen() {
 
           const action: "buy" | "sell" = baseDiffUsd > 0 ? "buy" : "sell";
 
+          //
+
           if (mode === "buy") {
             if (baseDiffUsd <= tolerance) {
               return;
@@ -807,6 +809,8 @@ export default function TransaccionesScreen() {
           }
 
           const suggestedBaseAmount = absBaseAmount;
+
+          //
 
           const operation: Operation = {
             id: `${asset._id}-${mode}-${action}`,

@@ -20,11 +20,9 @@ export function computeXIRR(
 
   const npvLow = npv(low);
   const npvHigh = npv(high);
-  console.log("🧮 NPV(low):", npvLow, "NPV(high):", npvHigh);
 
   // Si no hay cambio de signo, no hay solución
   if (npvLow * npvHigh > 0) {
-    console.warn("⚠️ No hay cambio de signo en NPV -> No hay XIRR en este rango");
     return null;
   }
 
@@ -34,7 +32,6 @@ export function computeXIRR(
     const value = npv(mid);
 
     if (Math.abs(value) < tolerance) {
-      console.log("✅ Convergió en iteración", i, "con rate =", mid);
       return mid;
     }
 
@@ -45,7 +42,6 @@ export function computeXIRR(
     }
   }
 
-  console.warn("⚠️ No convergió después de", maxIterations, "iteraciones");
   return null;
 }
 
@@ -54,4 +50,3 @@ export function computeCAGR(initialValue: number, finalValue: number, years: num
   if (initialValue <= 0 || finalValue <= 0 || years <= 0) return 0; // seguridad
   return Math.pow(finalValue / initialValue, 1 / years) - 1;
 }
-
