@@ -61,6 +61,8 @@ type Operation = {
   priceLabel?: string;
   mode?: "buy" | "sell" | "neutral";
   action: "buy" | "sell";
+  // signo de la pendiente (slope) del activo: 1 = positiva, -1 = negativa, 0 = neutra
+  slopeSign?: 1 | 0 | -1;
   buyPrice?: number;
   sellPrice?: number;
   suggestedBaseAmount: number;
@@ -309,7 +311,11 @@ const adjustOperationForClosings = (
     };
 
     const plan = buildClosurePlan(op, openPositions.longs, "sell");
-    if (!plan) return null;
+    // Si no hay cierres rentables y el slope es negativo, permitir abrir short igualmente
+    if (!plan) {
+      if ((op.slopeSign ?? 0) < 0) return op;
+      return null;
+    }
 
     const roundedBase = Number(plan.baseUsed.toFixed(8));
     const quoteUpper = quoteUpperGlobal;
@@ -373,7 +379,11 @@ const adjustOperationForClosings = (
     };
 
     const plan = buildClosurePlan(op, openPositions.shorts, "buy");
-    if (!plan) return null;
+    // Si no hay cierres rentables y el slope es positivo, permitir abrir long igualmente
+    if (!plan) {
+      if ((op.slopeSign ?? 0) > 0) return op;
+      return null;
+    }
 
     const roundedBase = Number(plan.baseUsed.toFixed(8));
     const quoteUpper2 = quoteUpperGlobal;
@@ -812,6 +822,8 @@ export default function TransaccionesScreen() {
 
           //
 
+          const slopeSign: 1 | 0 | -1 = slopeFraction > 0 ? 1 : slopeFraction < 0 ? -1 : 0;
+
           const operation: Operation = {
             id: `${asset._id}-${mode}-${action}`,
             assetId: asset._id,
@@ -828,6 +840,7 @@ export default function TransaccionesScreen() {
             allocation,
             price,
             priceLabel,
+            slopeSign,
             buyPrice: isUsdtPair ? lastPriceUsdtBuy : undefined,
             sellPrice: isUsdtPair ? lastPriceUsdtSell : undefined,
             suggestedBaseAmount,
@@ -1062,14 +1075,32 @@ export default function TransaccionesScreen() {
       return 2;
     })();
 
-    const closeEntries: Array<{ id: string; amount: number; closeValueFiat: number; closePrice: number }> = [];
-    for (const order of entriesSource) {
-      if (remainingBase <= BASE_TOLERANCE) break;
-      const take = Math.min(order.amount, remainingBase);
-      if (take <= 0) continue;
-      const closeVal = Number((take * openPrice).toFixed(closeValueDecimals));
-      closeEntries.push({ id: order.id, amount: Number(take.toFixed(8)), closeValueFiat: closeVal, closePrice: openPrice });
-      remainingBase = Number((remainingBase - take).toFixed(8));
+    // Cerrar sólo si es rentable según la lógica de plan (profit > 0)
+    let closeEntries: Array<{ id: string; amount: number; closeValueFiat: number; closePrice: number }> = [];
+    if (entriesSource.length > 0 && executedBaseUnits > BASE_TOLERANCE) {
+      const tempOp: Operation = {
+        ...selectedOperation,
+        // usar el precio de apertura ingresado por el usuario
+        price: openPrice,
+        suggestedBaseAmount: executedBaseUnits,
+      };
+      const plan = buildClosurePlan(
+        tempOp,
+        entriesSource,
+        selectedOperation.action === "sell" ? "sell" : "buy"
+      );
+      if (plan) {
+        closeEntries = plan.entries.map(e => ({
+          id: e.id,
+          amount: Number(e.amount.toFixed(8)),
+          closeValueFiat: Number(e.closeValueFiat.toFixed(closeValueDecimals)),
+          closePrice: openPrice,
+        }));
+        remainingBase = Number(Math.max(0, executedBaseUnits - plan.baseUsed).toFixed(8));
+      } else {
+        // no hay cierres rentables -> mantener posiciones abiertas y abrir nueva si corresponde
+        remainingBase = executedBaseUnits;
+      }
     }
 
     // Prorrateo de fee de cierre total ingresado

@@ -16,6 +16,11 @@ type AssetFromDB = {
   initialInvestment?: number | Record<string, number>;
 };
 
+type StockHolding = {
+  asset: string;
+  total: number; // unidades (acciones) guardadas en la base
+};
+
 type ProjectionResult =
   | { status: "success"; years: number; monthly: number; target: number }
   | { status: "not_reached" }
@@ -44,6 +49,26 @@ export default function PrediccionScreen() {
   const [minWithdrawInput, setMinWithdrawInput] = useState<string>("900");
   const [startInitialized, setStartInitialized] = useState(false);
   const [rentInitialized, setRentInitialized] = useState(false);
+  // Para actualizar los defaults si cambian los valores base (sin pisar ediciones del usuario)
+  const [autoStartDefault, setAutoStartDefault] = useState<string | null>(null);
+  const [autoRentDefault, setAutoRentDefault] = useState<string | null>(null);
+
+  // ====== Estado y refs para replicar cálculo de Balances ======
+  const [balances, setBalances] = useState<Balance[]>([]);
+  const [totals, setTotals] = useState<Totals>({ usd: 0, pen: 0 });
+  const wsRef = useRef<WebSocket | null>(null);
+  const listenKeyRef = useRef<string | null>(null);
+  const [penPrice, setPenPrice] = useState<number | null>(null);
+  const [stockHoldings, setStockHoldings] = useState<StockHolding[]>([]);
+  const [vooPrice, setVooPrice] = useState<number | null>(null);
+  const [usdtSellPrice, setUsdtSellPrice] = useState<number | null>(null);
+  const pricesRef = useRef<Record<string, number>>({});
+  const [pricesTick, setPricesTick] = useState(0); // tick para re-render al llegar precios
+  const priceWsRef = useRef<WebSocket | null>(null);
+
+  // Flujos de caja para XIRR
+  const [initialFlow, setInitialFlow] = useState<CashFlow | null>(null);
+  const [flows, setFlows] = useState<CashFlow[]>([]);
 
   const resetInputsToDefaults = useCallback(() => {
     setStartInitialized(false);
@@ -60,111 +85,70 @@ export default function PrediccionScreen() {
       setLoading(true);
       resetInputsToDefaults();
 
-      // 1️⃣ Traer inversión inicial
+      // 1️⃣ Traer inversión inicial (flujo negativo)
       const resInit = await api.get(`/config-info/${CONFIG_INFO_INITIAL_ID}`);
       const inversionInicial: CashFlow = {
-        amount: -Math.abs(resInit.data.total), // ⚠️ negativo
-          when: new Date(resInit.data.createdAt),
-        };
+        amount: -Math.abs(resInit.data.total),
+        when: new Date(resInit.data.createdAt),
+      };
+      setInitialFlow(inversionInicial);
 
-        // 2️⃣ Traer depósitos y retiros
-        const resFlows = await api.get("/depositewithdrawal");
-        const flowsData: any[] = Array.isArray(resFlows.data) ? resFlows.data : [];
-        const depositosRetiros: CashFlow[] = flowsData.map((cf: any) => {
-          const kind = String(cf.transaction || '').toLowerCase();
-          const isWithdrawal = kind === 'retiro';
-          const amt = Math.abs(Number(cf.quantity || 0));
-          const when = new Date(cf.createdAt);
-          return { amount: isWithdrawal ? Math.abs(amt) : -Math.abs(amt), when };
-        });
+      // 2️⃣ Traer depósitos y retiros
+      const resFlows = await api.get("/depositewithdrawal");
+      const flowsData: any[] = Array.isArray(resFlows.data) ? resFlows.data : [];
+      const depositosRetiros: CashFlow[] = flowsData.map((cf: any) => {
+        const kind = String(cf.transaction || '').toLowerCase();
+        const isWithdrawal = kind === 'retiro';
+        const amt = Math.abs(Number(cf.quantity || 0));
+        const when = new Date(cf.createdAt);
+        return { amount: isWithdrawal ? Math.abs(amt) : -Math.abs(amt), when };
+      });
+      setFlows([inversionInicial, ...depositosRetiros]);
 
-        // 3️⃣ Preparar cashflows
-        const flows = [inversionInicial, ...depositosRetiros];
+      // 3️⃣ Traer fuentes usadas por Balances
+      const res = await api.get("/binance/balances");
+      setBalances(res.data.balances);
+      setTotals(res.data.totals);
 
-        // 4️⃣ Calcular total USD actual
-        const resBalances = await api.get("/binance/balances");
-        const assetsPromise = api.get<AssetFromDB[]>("/assets");
-        const penRatePromise = fetch("https://open.er-api.com/v6/latest/PEN")
-          .then(res => res.json())
-          .then(data => (data.result === "success" && data.rates?.USD ? data.rates.USD : null))
-          .catch(() => null);
-        const vooPricePromise = fetch("https://query1.finance.yahoo.com/v8/finance/chart/VOO")
-          .then(res => res.json())
-          .then(data => data?.chart?.result?.[0]?.meta?.regularMarketPrice ?? null)
-          .catch(() => null);
+      const [penRes, vooRes, assetsRes] = await Promise.all([
+        fetch("https://open.er-api.com/v6/latest/PEN").then(r => r.json()).catch(() => null),
+        fetch("https://query1.finance.yahoo.com/v8/finance/chart/VOO").then(r => r.json()).catch(() => null),
+        api.get<AssetFromDB[]>("/assets").catch(() => ({ data: [] as AssetFromDB[] } as any)),
+      ]);
 
-        const [resAssets, penRate, vooPrice] = await Promise.all([
-          assetsPromise,
-          penRatePromise,
-          vooPricePromise,
-        ]);
-        const balances: Balance[] = resBalances.data.balances;
-        const totals: Totals = resBalances.data.totals;
-        const assetsData = Array.isArray(resAssets.data) ? resAssets.data : [];
-        const stockUsd = assetsData
-          .filter(asset => asset.type === "stock")
-          .reduce((acc, asset) => {
-            let amount = 0;
+      const penRate = penRes?.result === "success" && penRes?.rates?.USD ? penRes.rates.USD : null;
+      if (penRate != null) {
+        setPenPrice(penRate);
+      }
+      const voo = vooRes?.chart?.result?.[0]?.meta?.regularMarketPrice ?? null;
+      if (voo) {
+        setVooPrice(voo);
+      }
 
-            if (typeof asset.initialInvestment === "number") {
-              amount = asset.initialInvestment;
-            } else if (asset.initialInvestment) {
-              if (typeof asset.initialInvestment["USD"] === "number") {
-                amount = asset.initialInvestment["USD"];
-              } else if (typeof (asset.initialInvestment as any).amount === "number") {
-                amount = (asset.initialInvestment as any).amount;
-              }
-            }
-
-            if (asset.symbol === "VOO" && typeof vooPrice === "number") {
-              const val = amount * vooPrice;
-              return acc + val;
-            }
-
-            return acc + amount;
-          }, 0);
-
-        const totalUSD =
-          balances.reduce((acc, b) => acc + b.usdValue, 0) +
-          totals.usd +
-          (penRate ? totals.pen * penRate : 0) +
-          stockUsd;
-        setTotalUsd(totalUSD);
-
-        // 5️⃣ Calcular rentabilidad (XIRR con flujo final; fallback a CAGR)
-        const entradas = flows.filter(f => f.amount < 0).length;
-        const salidas = flows.filter(f => f.amount > 0).length;
-
-        const totalDepositos = flows
-          .filter(f => f.amount < 0)
-          .reduce((acc, f) => acc + Math.abs(f.amount), 0);
-        const totalRetiros = flows
-          .filter(f => f.amount > 0)
-          .reduce((acc, f) => acc + f.amount, 0);
-        const retiroPct = totalDepositos > 0 ? totalRetiros / totalDepositos : 0;
-        setWithdrawPercentage(retiroPct);
-        // Agregamos flujo final con el valor actual de la cartera para poder calcular XIRR a hoy
-        const flowsForXirr = [
-          ...flows,
-          { amount: totalUSD, when: new Date() },
-        ];
-        let xirrResult = computeXIRR(flowsForXirr);
-
-        if (xirrResult == null) {
-          // Fallback a CAGR si no converge
-          const startValue = Math.abs(inversionInicial.amount);
-          const endValue = totalUSD;
-          const startDate = inversionInicial.when;
-          const endDate = new Date();
-          const years = (endDate.getTime() - startDate.getTime()) / (365 * 24 * 3600 * 1000);
-          const cagr = Math.pow(endValue / startValue, 1 / years) - 1;
-          setXirr(cagr);
-          console.log('[Predicción] Método: CAGR | Valor:', `${(cagr * 100).toFixed(2)}%`);
-        } else {
-          setXirr(xirrResult);
-          console.log('[Predicción] Método: XIRR | Valor:', `${(xirrResult * 100).toFixed(2)}%`);
+      const stocks = (Array.isArray(assetsRes?.data) ? assetsRes.data : []).filter((a: AssetFromDB) => a.type === "stock");
+      const holdings: StockHolding[] = stocks.map((stock: AssetFromDB) => {
+        let amount = 0;
+        if (typeof stock.initialInvestment === "number") {
+          amount = stock.initialInvestment;
+        } else if (stock.initialInvestment) {
+          if (typeof stock.initialInvestment["USD"] === "number") {
+            amount = stock.initialInvestment["USD"];
+          } else if (typeof (stock.initialInvestment as any).amount === "number") {
+            amount = (stock.initialInvestment as any).amount;
+          }
         }
-      } catch (err) {
+        return { asset: stock.symbol, total: amount };
+      });
+      setStockHoldings(holdings);
+
+      try {
+        const conf = await api.get("/config-info/name/PrecioVentaUSDT");
+        const price = Number(conf.data?.total);
+        if (Number.isFinite(price)) {
+          setUsdtSellPrice(price);
+        }
+      } catch {}
+    } catch (err) {
       console.error("❌ Error fetching data:", err);
     } finally {
       setLoading(false);
@@ -187,18 +171,28 @@ export default function PrediccionScreen() {
   }, [fetchData]);
 
   useEffect(() => {
-    if (!startInitialized && totalUsd !== null) {
-      setStartOfYear(totalUsd.toFixed(2));
-      setStartInitialized(true);
+    if (totalUsd !== null && totalUsd > 0) {
+      const v = totalUsd.toFixed(2);
+      const shouldApply = !startInitialized || startOfYear === '' || startOfYear === autoStartDefault;
+      if (shouldApply) {
+        setStartOfYear(v);
+        setAutoStartDefault(v);
+        setStartInitialized(true);
+      }
     }
-  }, [startInitialized, totalUsd]);
+  }, [totalUsd, startInitialized, startOfYear, autoStartDefault]);
 
   useEffect(() => {
-    if (!rentInitialized && xirr !== null) {
-      setRentabilidadInput((xirr * 100).toFixed(2));
-      setRentInitialized(true);
+    if (xirr !== null && totalUsd !== null && totalUsd > 0) {
+      const v = (xirr * 100).toFixed(2);
+      const shouldApply = !rentInitialized || rentabilidadInput === '' || rentabilidadInput === autoRentDefault;
+      if (shouldApply) {
+        setRentabilidadInput(v);
+        setAutoRentDefault(v);
+        setRentInitialized(true);
+      }
     }
-  }, [rentInitialized, xirr]);
+  }, [xirr, totalUsd, rentInitialized, rentabilidadInput, autoRentDefault]);
 
   const projection = useMemo<ProjectionResult | null>(() => {
     if (totalUsd === null) return null;
@@ -267,6 +261,257 @@ export default function PrediccionScreen() {
   const defaultRentValue = xirr !== null ? (xirr * 100).toFixed(2) : "";
   const defaultMinWithdrawValue = "900";
   const defaultWithdrawValue = "30";
+
+  // ====== Lógica de precios/sockets idéntica a Balances ======
+  const fetchBalancesLikeBalancesScreen = useCallback(async () => {
+    try {
+      const res = await api.get("/binance/balances");
+      setBalances(res.data.balances);
+      setTotals(res.data.totals);
+    } catch (err) {
+      console.error("❌ Error al traer balances:", err);
+    }
+  }, []);
+
+  const fetchPenPriceLikeBalances = useCallback(async () => {
+    try {
+      const res = await fetch("https://open.er-api.com/v6/latest/PEN");
+      const data = await res.json();
+      if (data.result === "success" && data.rates?.USD) {
+        setPenPrice(data.rates.USD);
+      }
+    } catch (err) {
+      console.error("❌ Error al traer precio PEN/USD:", err);
+    }
+  }, []);
+
+  const fetchVooPriceLikeBalances = useCallback(async () => {
+    try {
+      const res = await fetch("https://query1.finance.yahoo.com/v8/finance/chart/VOO");
+      const data = await res.json();
+      const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice ?? null;
+      if (price) setVooPrice(price);
+    } catch (err) {
+      console.error("❌ Error al traer precio de VOO:", err);
+    }
+  }, []);
+
+  const initWebSocket = useCallback(async () => {
+    try {
+      const res = await api.post("/binance/create-listen-key");
+      listenKeyRef.current = res.data.listenKey;
+      const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${listenKeyRef.current}`);
+      wsRef.current = ws;
+      ws.onopen = () => {};
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.e === "outboundAccountPosition") {
+          fetchBalancesLikeBalancesScreen();
+        }
+      };
+      ws.onclose = () => {};
+      ws.onerror = () => {};
+    } catch (err) {
+      console.error("❌ Error iniciando WebSocket:", err);
+    }
+  }, [fetchBalancesLikeBalancesScreen]);
+
+  const keepAliveListenKey = useCallback(async () => {
+    if (!listenKeyRef.current) return;
+    try {
+      await api.put("/binance/keep-alive-listen-key", { listenKey: listenKeyRef.current });
+    } catch (err) {
+      console.error("❌ Error al renovar listenKey:", err);
+    }
+  }, []);
+
+  const fetchAssetsLikeBalances = useCallback(async () => {
+    try {
+      const res = await api.get<AssetFromDB[]>("/assets");
+      const stocks = res.data.filter((a: AssetFromDB) => a.type === "stock");
+      const holdings: StockHolding[] = stocks.map((stock: AssetFromDB) => {
+        let amount = 0;
+        if (typeof stock.initialInvestment === "number") {
+          amount = stock.initialInvestment;
+        } else if (stock.initialInvestment) {
+          if (typeof stock.initialInvestment["USD"] === "number") {
+            amount = stock.initialInvestment["USD"];
+          } else if (typeof (stock.initialInvestment as any).amount === "number") {
+            amount = (stock.initialInvestment as any).amount;
+          }
+        }
+        return { asset: stock.symbol, total: amount };
+      });
+      setStockHoldings(holdings);
+    } catch (err) {
+      console.error("❌ Error al traer assets:", err);
+    }
+  }, []);
+
+  const startPriceStream = useCallback((assets: string[]) => {
+    try {
+      if (priceWsRef.current) {
+        try { priceWsRef.current.close(); } catch {}
+        priceWsRef.current = null;
+      }
+      const pairs = Array.from(new Set(
+        assets
+          .filter(a => a && ["USDT", "USD", "PEN"].indexOf(a) === -1)
+          .map(a => `${a}USDT`)
+      ));
+      if (pairs.length === 0) return;
+      const streams = pairs.map(p => `${p.toLowerCase()}@miniticker`).join("/");
+      const url = `wss://stream.binance.com:9443/stream?streams=${streams}`;
+      const ws = new WebSocket(url);
+      priceWsRef.current = ws;
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          const data = msg?.data || msg;
+          const symbol: string | undefined = data?.s;
+          const closeStr: string | undefined = data?.c;
+          if (!symbol || typeof closeStr !== "string") return;
+          if (symbol.endsWith("USDT")) {
+            const asset = symbol.replace(/USDT$/, "");
+            const price = Number(closeStr);
+            if (Number.isFinite(price)) {
+              pricesRef.current[asset] = price;
+              setPricesTick(t => (t + 1) % 1_000_000);
+            }
+          }
+        } catch {}
+      };
+    } catch {}
+  }, []);
+
+  // Arrancar (o reiniciar) stream de precios cuando cambie la lista de assets
+  useEffect(() => {
+    const assets = balances.map(b => b.asset);
+    startPriceStream(assets);
+  }, [balances, startPriceStream]);
+
+  // Ciclo de vida principal (similar a Balances)
+  useEffect(() => {
+    fetchBalancesLikeBalancesScreen();
+    fetchPenPriceLikeBalances();
+    fetchVooPriceLikeBalances();
+    fetchAssetsLikeBalances();
+    (async () => {
+      try {
+        const res = await api.get("/config-info/name/PrecioVentaUSDT");
+        const price = Number(res.data?.total);
+        if (Number.isFinite(price)) setUsdtSellPrice(price);
+      } catch (err) {
+        console.error("❌ Error obteniendo PrecioVentaUSDT:", err);
+      }
+    })();
+    initWebSocket();
+
+    const interval = setInterval(() => {
+      keepAliveListenKey();
+      fetchPenPriceLikeBalances();
+      fetchVooPriceLikeBalances();
+    }, 30 * 60 * 1000);
+
+    return () => {
+      clearInterval(interval);
+      if (priceWsRef.current) try { priceWsRef.current.close(); } catch {}
+      if (wsRef.current) wsRef.current.close();
+    };
+  }, [fetchBalancesLikeBalancesScreen, fetchPenPriceLikeBalances, fetchVooPriceLikeBalances, fetchAssetsLikeBalances, initWebSocket, keepAliveListenKey]);
+
+  // Refrescar al enfocar la pantalla
+  useFocusEffect(
+    useCallback(() => {
+      fetchBalancesLikeBalancesScreen();
+      fetchPenPriceLikeBalances();
+      fetchVooPriceLikeBalances();
+      fetchAssetsLikeBalances();
+      (async () => {
+        try {
+          const res = await api.get("/config-info/name/PrecioVentaUSDT");
+          const price = Number(res.data?.total);
+          if (Number.isFinite(price)) setUsdtSellPrice(price);
+        } catch {}
+      })();
+    }, [fetchBalancesLikeBalancesScreen, fetchPenPriceLikeBalances, fetchVooPriceLikeBalances, fetchAssetsLikeBalances])
+  );
+
+  // Balances de acciones (VOO usa precio si existe)
+  const stockBalances: Balance[] = useMemo(() => {
+    return stockHoldings.map((holding) => {
+      const isVoo = holding.asset === "VOO";
+      const hasPrice = typeof vooPrice === "number";
+      const usdValue = isVoo
+        ? hasPrice
+          ? holding.total * (vooPrice as number)
+          : holding.total
+        : holding.total;
+      return { asset: holding.asset, total: holding.total, usdValue };
+    });
+  }, [stockHoldings, vooPrice, pricesTick]);
+
+  // Construir extendedBalances igual que en Balances
+  const extendedBalances: Balance[] = useMemo(() => {
+    return [
+      ...balances.map(b => {
+        if (b.asset === "USDT") {
+          const price = usdtSellPrice ?? 1;
+          return { ...b, usdValue: b.total * price };
+        }
+        const livePrice = pricesRef.current[b.asset];
+        if (typeof livePrice === "number" && Number.isFinite(livePrice) && b.total > 0) {
+          return { ...b, usdValue: b.total * livePrice };
+        }
+        return b;
+      }),
+      ...stockBalances,
+      { asset: "USD", total: totals.usd, usdValue: totals.usd },
+      { asset: "PEN", total: totals.pen, usdValue: penPrice ? totals.pen * penPrice : 0 },
+    ].filter((b) => b.usdValue > 0);
+  }, [balances, stockBalances, totals, penPrice, usdtSellPrice, pricesTick]);
+
+  const totalUsdCalculated = useMemo(() => {
+    return extendedBalances.reduce((acc, b) => acc + (b.asset === "PEN" && !penPrice ? 0 : b.usdValue), 0);
+  }, [extendedBalances, penPrice]);
+
+  // Mantener totalUsd en sync con el cálculo de Balances
+  useEffect(() => {
+    if (Number.isFinite(totalUsdCalculated)) {
+      setTotalUsd(totalUsdCalculated);
+    }
+  }, [totalUsdCalculated]);
+
+  // Recalcular XIRR y % de retiro cuando haya flujos + totalUsd
+  useEffect(() => {
+    if (initialFlow == null || totalUsd == null) return;
+    const flowsLocal = flows.length ? flows : [initialFlow];
+
+    const totalDepositos = flowsLocal
+      .filter(f => f.amount < 0)
+      .reduce((acc, f) => acc + Math.abs(f.amount), 0);
+    const totalRetiros = flowsLocal
+      .filter(f => f.amount > 0)
+      .reduce((acc, f) => acc + f.amount, 0);
+    const retiroPct = totalDepositos > 0 ? totalRetiros / totalDepositos : 0;
+    setWithdrawPercentage(retiroPct);
+
+    const flowsForXirr = [...flowsLocal, { amount: totalUsd, when: new Date() }];
+    // inputs de XIRR ya preparados en flowsForXirr
+    let xirrResult = computeXIRR(flowsForXirr);
+    if (xirrResult == null) {
+      const startValue = Math.abs(initialFlow.amount);
+      const endValue = totalUsd;
+      const startDate = initialFlow.when;
+      const endDate = new Date();
+      const years = (endDate.getTime() - startDate.getTime()) / (365 * 24 * 3600 * 1000);
+      const cagr = Math.pow(endValue / startValue, 1 / years) - 1;
+      setXirr(cagr);
+    } else {
+      setXirr(xirrResult);
+    }
+  }, [initialFlow, flows, totalUsd]);
+  
 
   return (
     <View style={styles.container}>
