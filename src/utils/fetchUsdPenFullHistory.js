@@ -79,7 +79,7 @@ export async function fetchUsdPenFullHistory(startDate) {
     return candles.filter(Boolean).sort((a, b) => a.closeTime - b.closeTime);
   } catch (err) {
     if (err?.response?.status === 400) {
-      console.warn("⚠️ Yahoo devolvió 400 para USD→PEN, reintentando con range=max");
+      console.info("ℹ️ Yahoo devolvió 400 para USD→PEN, aplicando fallback range=max");
       try {
         const fallbackUrl = buildYahooUrl(undefined);
         const res = await axios.get(fallbackUrl);
@@ -114,7 +114,7 @@ export async function fetchUsdPenFullHistory(startDate) {
         return candles;
       } catch (fallbackErr) {
         console.error(
-          "❌ Error obteniendo histórico USD→PEN (fallback range=max)",
+          "❌ Error obteniendo histórico USD→PEN (fallback range=max):",
           fallbackErr.message
         );
         return [];
