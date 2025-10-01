@@ -78,6 +78,49 @@ export async function fetchUsdPenFullHistory(startDate) {
 
     return candles.filter(Boolean).sort((a, b) => a.closeTime - b.closeTime);
   } catch (err) {
+    if (err?.response?.status === 400) {
+      console.warn("⚠️ Yahoo devolvió 400 para USD→PEN, reintentando con range=max");
+      try {
+        const fallbackUrl = buildYahooUrl(undefined);
+        const res = await axios.get(fallbackUrl);
+        const result = res.data?.chart?.result?.[0];
+        if (!result || !Array.isArray(result.timestamp)) return [];
+        const timestamps = result.timestamp;
+        const quote = result.indicators?.quote?.[0] ?? {};
+        const closes = quote.close ?? [];
+        const highs = quote.high ?? [];
+        const lows = quote.low ?? [];
+        const candles = timestamps
+          .map((ts, idx) => {
+            const close = toNumber(closes[idx], NaN);
+            if (!Number.isFinite(close)) return null;
+            const high = toNumber(highs[idx], close);
+            const low = toNumber(lows[idx], close);
+            return {
+              closeTime: new Date(ts * 1000),
+              close,
+              high,
+              low,
+            };
+          })
+          .filter(Boolean)
+          .sort((a, b) => a.closeTime - b.closeTime);
+        if (startDate) {
+          const start = startDate instanceof Date ? startDate : new Date(startDate);
+          if (start && !Number.isNaN(start.getTime())) {
+            return candles.filter(c => c.closeTime > start);
+          }
+        }
+        return candles;
+      } catch (fallbackErr) {
+        console.error(
+          "❌ Error obteniendo histórico USD→PEN (fallback range=max)",
+          fallbackErr.message
+        );
+        return [];
+      }
+    }
+
     console.error("❌ Error obteniendo histórico USD→PEN desde Yahoo Finance:", err.message);
     return [];
   }
