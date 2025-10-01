@@ -1,5 +1,4 @@
 import DepositeWithdrawal from "../models/depositewithdrawal.model.js";
-const Depositewithdrawal = DepositeWithdrawal;
 import axios from "axios";
 
 
@@ -104,7 +103,7 @@ export const putDepositeWithdrawal = async (req, res) => {
       finalQuantity = finalQuantity / data.rates.PEN;
     }
 
-     const updatedTx = await DepositeWithdrawal.findByIdAndUpdate(
+    const updatedTx = await DepositeWithdrawal.findByIdAndUpdate(
       id,
       { transaction, quantity: finalQuantity },
       { new: true }
