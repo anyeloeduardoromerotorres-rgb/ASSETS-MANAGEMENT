@@ -34,7 +34,7 @@ export async function getFlexibleEarnBalances() {
     // Paginación amplia para no perder assets (por defecto devuelve size=10)
     const rows = [];
     let current = 1;
-    const size = 1000;
+    const size = 100; // Binance allowlist: 1-100
     while (true) {
       const query = signQuery({ current, size });
       const url = `${baseUrl}sapi/v1/simple-earn/flexible/position?${query}`;
@@ -51,7 +51,11 @@ export async function getFlexibleEarnBalances() {
 
     return balanceEarn;
   } catch (error) {
-    console.error("❌ Error en getFlexibleEarnBalances:", error.message);
+    if (error?.response?.status === 400) {
+      console.info("ℹ️ Flexible Earn API devolvió 400 (sin posiciones o parámetros fuera de rango)");
+    } else {
+      console.error("❌ Error en getFlexibleEarnBalances:", error.message);
+    }
     return [];
   }
 }
@@ -62,7 +66,7 @@ export async function getLockedEarnBalances() {
 
     const rows = [];
     let current = 1;
-    const size = 1000;
+    const size = 100; // Binance allowlist: 1-100
     while (true) {
       const query = signQuery({ current, size });
       const url = `${baseUrl}sapi/v1/simple-earn/locked/position?${query}`;
@@ -79,7 +83,11 @@ export async function getLockedEarnBalances() {
 
     return balanceLocked;
   } catch (error) {
-    console.error("❌ Error en getLockedEarnBalances:", error.message);
+    if (error?.response?.status === 400) {
+      console.info("ℹ️ Locked Earn API devolvió 400 (sin posiciones o parámetros fuera de rango)");
+    } else {
+      console.error("❌ Error en getLockedEarnBalances:", error.message);
+    }
     return [];
   }
 }
@@ -113,5 +121,3 @@ export async function getAllBalances() {
     return [];
   }
 }
-
-
