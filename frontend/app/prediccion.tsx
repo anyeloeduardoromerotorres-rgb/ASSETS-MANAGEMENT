@@ -52,6 +52,8 @@ export default function PrediccionScreen() {
   // Para actualizar los defaults si cambian los valores base (sin pisar ediciones del usuario)
   const [autoStartDefault, setAutoStartDefault] = useState<string | null>(null);
   const [autoRentDefault, setAutoRentDefault] = useState<string | null>(null);
+  const [isEditingStart, setIsEditingStart] = useState(false);
+  const [isEditingRent, setIsEditingRent] = useState(false);
 
   // ====== Estado y refs para replicar cálculo de Balances ======
   const [balances, setBalances] = useState<Balance[]>([]);
@@ -173,26 +175,26 @@ export default function PrediccionScreen() {
   useEffect(() => {
     if (totalUsd !== null && totalUsd > 0) {
       const v = totalUsd.toFixed(2);
-      const shouldApply = !startInitialized || startOfYear === '' || startOfYear === autoStartDefault;
+      const shouldApply = (!startInitialized || startOfYear === autoStartDefault) && !isEditingStart;
       if (shouldApply) {
         setStartOfYear(v);
         setAutoStartDefault(v);
         setStartInitialized(true);
       }
     }
-  }, [totalUsd, startInitialized, startOfYear, autoStartDefault]);
+  }, [totalUsd, startInitialized, startOfYear, autoStartDefault, isEditingStart]);
 
   useEffect(() => {
     if (xirr !== null && totalUsd !== null && totalUsd > 0) {
       const v = (xirr * 100).toFixed(2);
-      const shouldApply = !rentInitialized || rentabilidadInput === '' || rentabilidadInput === autoRentDefault;
+      const shouldApply = (!rentInitialized || rentabilidadInput === autoRentDefault) && !isEditingRent;
       if (shouldApply) {
         setRentabilidadInput(v);
         setAutoRentDefault(v);
         setRentInitialized(true);
       }
     }
-  }, [xirr, totalUsd, rentInitialized, rentabilidadInput, autoRentDefault]);
+  }, [xirr, totalUsd, rentInitialized, rentabilidadInput, autoRentDefault, isEditingRent]);
 
   const projection = useMemo<ProjectionResult | null>(() => {
     if (totalUsd === null) return null;
@@ -540,10 +542,10 @@ export default function PrediccionScreen() {
               value={startOfYear}
               onChangeText={setStartOfYear}
               onFocus={() => {
-                if (startOfYear === defaultStartValue) {
-                  setStartOfYear("");
-                }
+                setIsEditingStart(true);
+                if (startOfYear === defaultStartValue) setStartOfYear("");
               }}
+              onBlur={() => setIsEditingStart(false)}
               keyboardType="numeric"
             />
           </View>
@@ -558,10 +560,10 @@ export default function PrediccionScreen() {
               value={rentabilidadInput}
               onChangeText={setRentabilidadInput}
               onFocus={() => {
-                if (rentabilidadInput === defaultRentValue) {
-                  setRentabilidadInput("");
-                }
+                setIsEditingRent(true);
+                if (rentabilidadInput === defaultRentValue) setRentabilidadInput("");
               }}
+              onBlur={() => setIsEditingRent(false)}
               keyboardType="numeric"
             />
           </View>

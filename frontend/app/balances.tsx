@@ -50,6 +50,14 @@ export default function BalancesScreen() {
   const fetchBalances = async () => {
     try {
       const res = await api.get("/binance/balances");
+      // Logs para depurar lo que devuelve la API de Binance
+      try {
+        const flex = await api.get('/binance/earn/flexible');
+        console.log('[Balances][flexible] positionsCount =', flex.data?.positionsCount, 'assetsCount =', flex.data?.assetsCount);
+        console.log('[Balances][flexible] balances =', flex.data?.balances);
+      } catch (e) {
+        console.log('[Balances][flexible] no disponible:', (e as any)?.message);
+      }
       setBalances(res.data.balances);
       setTotals(res.data.totals);
     } catch (err) {

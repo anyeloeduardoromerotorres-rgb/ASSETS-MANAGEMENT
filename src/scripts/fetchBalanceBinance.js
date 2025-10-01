@@ -31,26 +31,55 @@ export async function getFlexibleEarnBalances() {
   try {
     const baseUrl = await getBinanceBaseUrl();
 
-    const query = signQuery();
-    const url = `${baseUrl}sapi/v1/simple-earn/flexible/position?${query}`;
-
-    const response = await axios.get(url, { headers: getBinanceHeaders() });
-
-    if (!response.data || !response.data.rows) {
-      throw new Error("Respuesta inválida de Binance Earn Flexible");
+    // Paginación amplia para no perder assets (por defecto devuelve size=10)
+    const rows = [];
+    let current = 1;
+    const size = 1000;
+    while (true) {
+      const query = signQuery({ current, size });
+      const url = `${baseUrl}sapi/v1/simple-earn/flexible/position?${query}`;
+      const response = await axios.get(url, { headers: getBinanceHeaders() });
+      const pageRows = response?.data?.rows ?? [];
+      rows.push(...pageRows);
+      if (!pageRows.length || pageRows.length < size) break;
+      current += 1;
     }
 
-    const balanceEarn = response.data.rows
+    const balanceEarn = rows
       .filter(b => parseFloat(b.totalAmount) > 0)
-      .map(b => ({
-        asset: b.asset,
-        amount: parseFloat(b.totalAmount),
-      }));
+      .map(b => ({ asset: b.asset, amount: parseFloat(b.totalAmount) }));
 
-      
-      return balanceEarn
+    return balanceEarn;
   } catch (error) {
     console.error("❌ Error en getFlexibleEarnBalances:", error.message);
+    return [];
+  }
+}
+
+export async function getLockedEarnBalances() {
+  try {
+    const baseUrl = await getBinanceBaseUrl();
+
+    const rows = [];
+    let current = 1;
+    const size = 1000;
+    while (true) {
+      const query = signQuery({ current, size });
+      const url = `${baseUrl}sapi/v1/simple-earn/locked/position?${query}`;
+      const response = await axios.get(url, { headers: getBinanceHeaders() });
+      const pageRows = response?.data?.rows ?? [];
+      rows.push(...pageRows);
+      if (!pageRows.length || pageRows.length < size) break;
+      current += 1;
+    }
+
+    const balanceLocked = rows
+      .filter(b => parseFloat(b.totalAmount) > 0)
+      .map(b => ({ asset: b.asset, amount: parseFloat(b.totalAmount) }));
+
+    return balanceLocked;
+  } catch (error) {
+    console.error("❌ Error en getLockedEarnBalances:", error.message);
     return [];
   }
 }
@@ -58,15 +87,16 @@ export async function getFlexibleEarnBalances() {
 // 🔹 Funcion combinada
 export async function getAllBalances() {
   try {
-    const [spot, earn] = await Promise.all([
+    const [spot, earnFlexible, earnLocked] = await Promise.all([
       getSpotBalances(),
       getFlexibleEarnBalances(),
+      getLockedEarnBalances(),
     ]);
 
     // combinamos balances sumando por asset
     const balancesMap = new Map();
 
-    [...spot, ...earn].forEach(b => {
+    [...spot, ...earnFlexible, ...earnLocked].forEach(b => {
       if (balancesMap.has(b.asset)) {
         balancesMap.set(b.asset, {
           asset: b.asset,
@@ -83,6 +113,5 @@ export async function getAllBalances() {
     return [];
   }
 }
-
 
 

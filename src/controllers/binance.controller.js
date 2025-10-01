@@ -1,7 +1,7 @@
 // controllers/binance.controller.js
 import axios from "axios";
 import { getBinanceBaseUrl, getBinanceHeaders } from "../utils/binance.utils.js";
-import { getAllBalances } from "../scripts/fetchBalanceBinance.js";
+import { getAllBalances, getFlexibleEarnBalances } from "../scripts/fetchBalanceBinance.js";
 import ConfigInfo from "../models/configInfo.model.js";
 
 export async function createListenKey(req, res) {
@@ -95,5 +95,28 @@ export async function getAllBalancesController(req, res) {
   } catch (error) {
     console.error("❌ Error en getAllBalancesController:", error.message);
     res.status(500).json({ error: "No se pudo obtener balances de Binance" });
+  }
+}
+
+// 🔎 Solo Flexible Earn (para diagnóstico)
+export async function getFlexibleEarnOnlyController(req, res) {
+  try {
+    const rows = await getFlexibleEarnBalances();
+    // rows ya viene como [{ asset, amount }], pero puede contener activos repetidos si Binance devuelve varias filas por asset.
+    const map = new Map();
+    for (const r of rows) {
+      const prev = map.get(r.asset) || 0;
+      map.set(r.asset, prev + (Number(r.amount) || 0));
+    }
+    const balances = Array.from(map.entries()).map(([asset, amount]) => ({ asset, amount }));
+    res.json({
+      source: "flexible",
+      positionsCount: rows.length,
+      assetsCount: balances.length,
+      balances,
+    });
+  } catch (error) {
+    console.error("❌ Error en getFlexibleEarnOnlyController:", error.message);
+    res.status(500).json({ error: "No se pudo obtener Flexible Earn" });
   }
 }
