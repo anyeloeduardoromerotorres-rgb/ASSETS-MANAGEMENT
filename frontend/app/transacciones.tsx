@@ -9,7 +9,6 @@ import {
   TouchableOpacity,
   Modal,
   TextInput,
-  Button,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import api from "../constants/api";
@@ -82,16 +81,30 @@ type Operation = {
   actualQuoteUsd: number;
   baseDiffUsd: number;
   actionMessage: string;
+  actualBaseAmountUnits?: number;
+  minPrice?: number;
+  maxPrice?: number;
+  baseHoldUsd?: number;
+  quoteHoldUsd?: number;
+  maxBaseAllowed?: number;
+  baseHoldingUsd?: number;
+  quoteHoldingUsd?: number;
+  slopeFraction?: number;
 };
 
-type TradeFormState = {
-  openPrice: string;
-  amount: string;
-  openValueFiat: string;
-  openFee: string;
-  feeCurrency: string;
-  openDate: string;
-  closeFee: string;
+type SimulationResult = {
+  status: "action" | "none" | "invalid";
+  message: string;
+  suggestedBaseAmount?: number;
+  suggestedFiatValue?: number;
+  action?: "buy" | "sell";
+  operation?: Operation;
+};
+
+type PriceOverrideState = {
+  input: string;
+  result: SimulationResult | null;
+  visible: boolean;
 };
 
 type TransactionDoc = {
@@ -119,12 +132,6 @@ type OpenPosition = {
 type OpenPositionsByAsset = {
   longs: OpenPosition[];
   shorts: OpenPosition[];
-};
-
-const formatNumberForInput = (value: number, decimals = 6) => {
-  if (!Number.isFinite(value)) return "";
-  const factor = 10 ** decimals;
-  return (Math.round(value * factor) / factor).toString();
 };
 
 const parseNumberInput = (value: string) => {
@@ -436,13 +443,9 @@ export default function TransaccionesScreen() {
   const hasFetchedOnFocus = useRef(false);
   const isFetchingRef = useRef(false);
   const [selectedOperation, setSelectedOperation] = useState<Operation | null>(null);
-  const [tradeFormVisible, setTradeFormVisible] = useState(false);
-  const [tradeFormError, setTradeFormError] = useState<string | null>(null);
-  const [tradeFormSuccess, setTradeFormSuccess] = useState<string | null>(null);
-  const [savingTransaction, setSavingTransaction] = useState(false);
-
-  const [tradeForm, setTradeForm] = useState<TradeFormState | null>(null);
+  const [suggestionModalVisible, setSuggestionModalVisible] = useState(false);
   const openPositionsByAssetRef = useRef<Map<string, OpenPositionsByAsset>>(new Map());
+  const [priceOverrides, setPriceOverrides] = useState<Record<string, PriceOverrideState>>({});
 
   const loadData = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
@@ -494,13 +497,20 @@ export default function TransaccionesScreen() {
 
       const resolvedUsdtBuy = getConfigNumber("PrecioCompraUSDT", "lastPriceUsdtBuy");
       const resolvedUsdtSell = getConfigNumber("PrecioVentaUSDT", "lastPriceUsdtSell");
-      const lastPriceUsdtBuy =
-        typeof resolvedUsdtBuy === "number" && resolvedUsdtBuy > 0 ? resolvedUsdtBuy : 1;
-      const lastPriceUsdtSell =
-        typeof resolvedUsdtSell === "number" && resolvedUsdtSell > 0 ? resolvedUsdtSell : lastPriceUsdtBuy;
-      const usdtUsdRate = Number.isFinite(lastPriceUsdtBuy + lastPriceUsdtSell)
-        ? (lastPriceUsdtBuy + lastPriceUsdtSell) / 2
-        : lastPriceUsdtSell || lastPriceUsdtBuy || 1;
+
+      const usdtBuyPrice =
+        typeof resolvedUsdtBuy === "number" && resolvedUsdtBuy > 0 ? resolvedUsdtBuy : null;
+      const usdtSellPrice =
+        typeof resolvedUsdtSell === "number" && resolvedUsdtSell > 0 ? resolvedUsdtSell : null;
+
+      const lastPriceUsdtBuy = usdtBuyPrice ?? usdtSellPrice ?? 1;
+      const lastPriceUsdtSell = usdtSellPrice ?? usdtBuyPrice ?? 1;
+
+      const usdtUsdRate = (() => {
+        if (usdtSellPrice) return usdtSellPrice;
+        if (usdtBuyPrice) return usdtBuyPrice;
+        return 1;
+      })();
 
       const penUsdRate = penRes?.result === "success" && penRes?.rates?.USD ? penRes.rates.USD : null;
       const penToUsd = penUsdRate ?? 0; // USD por PEN
@@ -639,7 +649,11 @@ export default function TransaccionesScreen() {
 
         let fetchedPrice: number | null;
         if (asset.type === "crypto") {
-          fetchedPrice = await fetchAssetPrice(asset.symbol, lastPriceUsdtSell, usdToPen ?? 0);
+          fetchedPrice = await fetchAssetPrice(
+            asset.symbol,
+            lastPriceUsdtSell,
+            usdToPen ?? 0
+          );
         } else {
           fetchedPrice = externalPriceMap.get(asset.symbol) ?? null;
           if (!fetchedPrice) {
@@ -718,7 +732,14 @@ export default function TransaccionesScreen() {
               try {
                 await api.put(`/assets/${asset._id}`, updates);
               } catch (updateErr) {
-                console.warn("No se pudo actualizar límites para", asset.symbol, updateErr);
+                const isBadRequest =
+                  updateErr &&
+                  typeof updateErr === "object" &&
+                  "response" in updateErr &&
+                  (updateErr as any).response?.status === 400;
+                if (!isBadRequest) {
+                  console.warn("No se pudo actualizar límites para", asset.symbol, updateErr);
+                }
               }
             }
           }
@@ -769,21 +790,17 @@ export default function TransaccionesScreen() {
           }
 
           const baseDiffUsd = targetBaseUsd - actualBaseUsd;
-          const tolerance = Math.max(allocation * 0.01, 10);
-
           const action: "buy" | "sell" = baseDiffUsd > 0 ? "buy" : "sell";
 
-          //
+          if (mode === "buy" && action !== "buy") {
+            return;
+          }
 
-          if (mode === "buy") {
-            if (baseDiffUsd <= tolerance) {
-              return;
-            }
-          } else if (mode === "sell") {
-            if (baseDiffUsd >= -tolerance) {
-              return;
-            }
-          } else if (Math.abs(baseDiffUsd) <= tolerance) {
+          if (mode === "sell" && action !== "sell") {
+            return;
+          }
+
+          if (Math.abs(baseDiffUsd) <= BASE_TOLERANCE) {
             return;
           }
 
@@ -841,8 +858,8 @@ export default function TransaccionesScreen() {
             price,
             priceLabel,
             slopeSign,
-            buyPrice: isUsdtPair ? lastPriceUsdtBuy : undefined,
-            sellPrice: isUsdtPair ? lastPriceUsdtSell : undefined,
+            buyPrice: isUsdtPair ? usdtBuyPrice ?? undefined : undefined,
+            sellPrice: isUsdtPair ? usdtSellPrice ?? undefined : undefined,
             suggestedBaseAmount,
             suggestedFiatValue: quoteValue,
             targetBaseUsd,
@@ -852,20 +869,33 @@ export default function TransaccionesScreen() {
             actualQuoteUsd,
             baseDiffUsd,
             actionMessage,
+            actualBaseAmountUnits: baseHolding.amount,
+            minPrice,
+            maxPrice,
+            baseHoldUsd,
+            quoteHoldUsd,
+            maxBaseAllowed,
+            baseHoldingUsd: baseHolding.usdValue,
+            quoteHoldingUsd: quoteHolding.usdValue,
+            slopeFraction,
           };
 
           operationsResult.push(operation);
         };
 
         if (isUsdtPair) {
-          await evaluateScenario("buy", lastPriceUsdtBuy ?? fetchedPrice ?? 1, {
-            allowUpdates: true,
-            priceLabel: "PrecioCompraUSDT",
-          });
-          await evaluateScenario("sell", lastPriceUsdtSell ?? fetchedPrice ?? lastPriceUsdtBuy ?? 1, {
-            allowUpdates: false,
-            priceLabel: "PrecioVentaUSDT",
-          });
+          if (usdtBuyPrice != null) {
+            await evaluateScenario("buy", usdtBuyPrice, {
+              allowUpdates: true,
+              priceLabel: "PrecioCompraUSDT",
+            });
+          }
+          if (usdtSellPrice != null) {
+            await evaluateScenario("sell", usdtSellPrice, {
+              allowUpdates: false,
+              priceLabel: "PrecioVentaUSDT",
+            });
+          }
         } else {
           await evaluateScenario("neutral", fetchedPrice, {
             allowUpdates: true,
@@ -886,6 +916,177 @@ export default function TransaccionesScreen() {
         setLoading(false);
         setRefreshing(false);
       }
+    },
+    []
+  );
+
+  const simulateOperation = useCallback(
+    (op: Operation, overridePrice: number): SimulationResult => {
+      if (!Number.isFinite(overridePrice) || overridePrice <= 0) {
+        return {
+          status: "invalid",
+          message: "Ingresa un precio válido mayor a 0.",
+        };
+      }
+
+      const price = Number(overridePrice);
+      const baseUpper = op.baseAsset?.toUpperCase?.() ?? op.baseAsset;
+      const quoteUpper = op.quoteAsset?.toUpperCase?.() ?? op.quoteAsset;
+      const isUsdtPair = op.symbol === "USDTUSD";
+
+      let min = Number.isFinite(op.minPrice) ? (op.minPrice as number) : price;
+      let max = Number.isFinite(op.maxPrice) ? (op.maxPrice as number) : price;
+      if (min > max) {
+        const temp = min;
+        min = max;
+        max = temp;
+      }
+
+      const allocation = op.allocation;
+      const baseHoldingAmount = op.actualBaseAmountUnits ?? 0;
+      const baseHoldingUsd = op.baseHoldingUsd ?? op.actualBaseUsd;
+      const quoteHoldingUsd = op.quoteHoldingUsd ?? op.actualQuoteUsd;
+      const baseHoldUsd = op.baseHoldUsd ?? 0;
+      const quoteHoldUsd = op.quoteHoldUsd ?? 0;
+      const maxBaseAllowed = op.maxBaseAllowed ?? op.allocation;
+
+      let actualBaseUsd = op.actualBaseUsd;
+      if (baseUpper === "USD") {
+        actualBaseUsd = baseHoldingUsd;
+      } else if (Number.isFinite(baseHoldingAmount)) {
+        actualBaseUsd = Number((baseHoldingAmount * price).toFixed(8));
+      }
+      if (!Number.isFinite(actualBaseUsd)) {
+        actualBaseUsd = op.actualBaseUsd;
+      }
+
+      const actualQuoteUsd = quoteHoldingUsd;
+
+      const priceRange = max - min;
+      const normalized = priceRange === 0 ? 0.5 : clamp((price - min) / priceRange, 0, 1);
+      let baseShare = clamp(1 - normalized, 0, 1);
+      const desiredBaseUsd = allocation * baseShare;
+
+      let targetBaseCandidate = desiredBaseUsd;
+      const rawBaseDiff = desiredBaseUsd - actualBaseUsd;
+      const rawSellUsd = rawBaseDiff < 0 ? -rawBaseDiff : 0;
+
+      if (baseHoldUsd > 0) {
+        const availableExcess = Math.max(0, actualBaseUsd - baseHoldUsd);
+        if (rawSellUsd > 0) {
+          if (rawSellUsd < baseHoldUsd || availableExcess <= BASE_TOLERANCE) {
+            targetBaseCandidate = actualBaseUsd;
+          } else {
+            const sellFinal = Math.min(rawSellUsd - baseHoldUsd, availableExcess);
+            targetBaseCandidate = actualBaseUsd - sellFinal;
+          }
+        }
+      }
+
+      const adjustedDesiredBaseUsd = clamp(targetBaseCandidate, 0, maxBaseAllowed);
+
+      let targetBaseUsd: number;
+      if (actualBaseUsd < adjustedDesiredBaseUsd) {
+        targetBaseUsd = Math.min(adjustedDesiredBaseUsd, maxBaseAllowed);
+      } else {
+        const minimumAfterSell = Math.max(adjustedDesiredBaseUsd, baseHoldUsd);
+        const cappedMinimum = clamp(minimumAfterSell, 0, maxBaseAllowed);
+        targetBaseUsd = actualBaseUsd > cappedMinimum ? cappedMinimum : actualBaseUsd;
+      }
+
+      targetBaseUsd = clamp(targetBaseUsd, 0, maxBaseAllowed);
+
+      let targetQuoteUsd = allocation - targetBaseUsd;
+      if (targetQuoteUsd < quoteHoldUsd) {
+        targetQuoteUsd = quoteHoldUsd;
+        targetBaseUsd = clamp(allocation - targetQuoteUsd, 0, maxBaseAllowed);
+      }
+
+      const baseDiffUsd = Number((targetBaseUsd - actualBaseUsd).toFixed(8));
+
+      if (Math.abs(baseDiffUsd) <= BASE_TOLERANCE) {
+        return {
+          status: "none",
+          message: "Con este precio no se debe operar; la diferencia es despreciable.",
+        };
+      }
+
+      const action: "buy" | "sell" = baseDiffUsd > 0 ? "buy" : "sell";
+      const priceIsValid = Number.isFinite(price) && price > 0;
+      let suggestedBaseAmount =
+        baseUpper === "USD" || !priceIsValid
+          ? Math.abs(baseDiffUsd)
+          : Math.abs(baseDiffUsd) / price;
+
+      if (!Number.isFinite(suggestedBaseAmount) || suggestedBaseAmount <= 0) {
+        return {
+          status: "none",
+          message: "Con este precio no se debe operar.",
+        };
+      }
+
+      suggestedBaseAmount = Number(suggestedBaseAmount.toFixed(8));
+
+      const suggestedFiatValue = (() => {
+        if (!priceIsValid) return Math.abs(baseDiffUsd);
+        if (quoteUpper === "USD" || quoteUpper === "USDT" || quoteUpper === "USDC") {
+          return Math.abs(baseDiffUsd);
+        }
+        return suggestedBaseAmount * price;
+      })();
+
+      const approxLabel =
+        quoteUpper === "USD" || quoteUpper === "USDT" || quoteUpper === "USDC"
+          ? `$${Math.abs(baseDiffUsd).toFixed(2)}`
+          : `${suggestedFiatValue.toFixed(2)} ${quoteUpper}`;
+
+      const usdtLabel = action === "buy" ? "PrecioCompraUSDT" : "PrecioVentaUSDT";
+      let actionMessage: string;
+      if (action === "buy") {
+        actionMessage = isUsdtPair
+          ? `Comprar ${suggestedBaseAmount.toFixed(6)} ${op.baseAsset} (~${approxLabel}) usando ${op.quoteAsset} a $${price.toFixed(4)} (${usdtLabel}).`
+          : `Comprar ${suggestedBaseAmount.toFixed(6)} ${op.baseAsset} (~${approxLabel}) usando ${op.quoteAsset}.`;
+      } else {
+        actionMessage = isUsdtPair
+          ? `Vender ${suggestedBaseAmount.toFixed(6)} ${op.baseAsset} (~${approxLabel}) por ${op.quoteAsset} a $${price.toFixed(4)} (${usdtLabel}).`
+          : `Vender ${suggestedBaseAmount.toFixed(6)} ${op.baseAsset} (~${approxLabel}) por ${op.quoteAsset}.`;
+      }
+
+      const simulatedOp: Operation = {
+        ...op,
+        price,
+        action,
+        actionMessage,
+        baseDiffUsd,
+        suggestedBaseAmount,
+        suggestedFiatValue,
+        actualBaseUsd,
+        actualQuoteUsd,
+        targetBaseUsd,
+        targetQuoteUsd,
+        targetBasePercent: allocation > 0 ? targetBaseUsd / allocation : 0,
+      };
+
+      const adjusted = adjustOperationForClosings(
+        simulatedOp,
+        openPositionsByAssetRef.current.get(op.assetId)
+      );
+
+      if (!adjusted) {
+        return {
+          status: "none",
+          message: "A este precio no se debe operar (no hay cierres rentables).",
+        };
+      }
+
+      return {
+        status: "action",
+        message: adjusted.actionMessage,
+        suggestedBaseAmount: adjusted.suggestedBaseAmount,
+        suggestedFiatValue: adjusted.suggestedFiatValue,
+        action: adjusted.action,
+        operation: adjusted,
+      };
     },
     []
   );
@@ -916,268 +1117,91 @@ export default function TransaccionesScreen() {
     loadData({ silent: true });
   }, [loadData]);
 
+  useEffect(() => {
+    setPriceOverrides(prev => {
+      const next: Record<string, PriceOverrideState> = {};
+      let changed = false;
+      operations.forEach(op => {
+        if (prev[op.id]) {
+          next[op.id] = prev[op.id];
+        }
+      });
+      if (Object.keys(next).length !== Object.keys(prev).length) {
+        changed = true;
+      }
+      if (!changed) {
+        for (const key of Object.keys(next)) {
+          if (next[key] !== prev[key]) {
+            changed = true;
+            break;
+          }
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [operations]);
+
+  const handleSimulatedPriceChange = useCallback(
+    (op: Operation, value: string) => {
+      setPriceOverrides(prev => {
+        const next = { ...prev };
+        const price = parseNumberInput(value);
+        const current = prev[op.id];
+        let result: SimulationResult | null = null;
+        if (value.trim().length === 0) {
+          result = null;
+        } else if (Number.isFinite(price) && price > 0) {
+          result = simulateOperation(op, price);
+        } else {
+          result = {
+            status: "invalid",
+            message: "Ingresa un precio válido.",
+          };
+        }
+        next[op.id] = {
+          input: value,
+          result,
+          visible: current?.visible ?? true,
+        };
+        return next;
+      });
+    },
+    [simulateOperation]
+  );
+
+  const togglePriceOverride = useCallback((opId: string) => {
+    setPriceOverrides(prev => {
+      const next = { ...prev };
+      const current = next[opId];
+      const visible = !(current?.visible ?? false);
+      next[opId] = {
+        input: current?.input ?? "",
+        result: current?.result ?? null,
+        visible,
+      };
+      return next;
+    });
+  }, []);
+
   const handleOperationPress = useCallback(
     (operation: Operation) => {
       if (operation.action !== "sell" && operation.action !== "buy") return;
-      const nowIso = new Date().toISOString();
-      const defaultFeeCurrency = "USDT";
-      const defaultFeeValue = operation.suggestedFiatValue * 0.001; // 0.1%
-      const defaultCloseFee = 0;
-      setSelectedOperation(operation);
-      setTradeForm({
-        openPrice: formatNumberForInput(operation.price, 6),
-        amount: formatNumberForInput(operation.suggestedBaseAmount, 6),
-        openValueFiat: formatNumberForInput(
-          operation.suggestedFiatValue,
-          ((): number => {
-            const q = (operation.fiatCurrency?.toUpperCase?.() ?? operation.fiatCurrency) as string;
-            if (q === "USDT") return 8;
-            if (q === "USD" || q === "PEN") return 3;
-            return 2;
-          })()
-        ),
-        openFee: formatNumberForInput(defaultFeeValue, 4),
-        feeCurrency: defaultFeeCurrency,
-        openDate: nowIso,
-        closeFee: formatNumberForInput(defaultCloseFee, 4),
-      });
-      setTradeFormError(null);
-      setTradeFormSuccess(null);
-      setTradeFormVisible(true);
+      const override = priceOverrides[operation.id];
+      const overrideResult = override?.result;
+      const derivedOperation =
+        overrideResult?.status === "action" && overrideResult.operation
+          ? overrideResult.operation
+          : operation;
+      setSelectedOperation(derivedOperation);
+      setSuggestionModalVisible(true);
     },
-    []
+    [priceOverrides]
   );
 
-  const handleTradeFormChange = useCallback(
-    (field: keyof TradeFormState, value: string) => {
-      setTradeForm(prev => {
-        if (!prev) return prev;
-        const updated: TradeFormState = { ...prev, [field]: value };
-        if (field === "feeCurrency") {
-          updated.feeCurrency = value.toUpperCase();
-        }
-        if (field === "closeFee") {
-          updated.closeFee = value;
-        }
-        if (field === "amount" || field === "openPrice") {
-          const amount = parseNumberInput(field === "amount" ? value : updated.amount);
-          const price = parseNumberInput(field === "openPrice" ? value : updated.openPrice);
-          if (Number.isFinite(amount) && Number.isFinite(price)) {
-            const newFiatValue = amount * price;
-            const prevFiatValue = parseNumberInput(prev.openValueFiat);
-            const previousAutoFee = Number.isFinite(prevFiatValue)
-              ? formatNumberForInput(prevFiatValue * 0.001, 4)
-              : prev.openFee;
-            updated.openValueFiat = formatNumberForInput(newFiatValue, 2);
-            if (prev.openFee === previousAutoFee) {
-              updated.openFee = formatNumberForInput(newFiatValue * 0.001, 4);
-            }
-          }
-        }
-        return updated;
-      });
-    },
-    []
-  );
-
-  const closeTradeForm = useCallback(() => {
-    setTradeFormVisible(false);
+  const closeSuggestionModal = useCallback(() => {
+    setSuggestionModalVisible(false);
     setSelectedOperation(null);
-    setTradeForm(null);
-    setTradeFormError(null);
-    setTradeFormSuccess(null);
   }, []);
-
-  const handleSaveTransaction = useCallback(async () => {
-    if (!selectedOperation || !tradeForm) return;
-
-    const openPrice = parseNumberInput(tradeForm.openPrice);
-    const amount = parseNumberInput(tradeForm.amount);
-    const openValueFiatInput = parseNumberInput(tradeForm.openValueFiat);
-    const feeAmount = parseNumberInput(tradeForm.openFee || "0");
-    const closeFeeAmount = parseNumberInput(tradeForm.closeFee || "0");
-
-    if (!Number.isFinite(openPrice) || openPrice <= 0) {
-      setTradeFormError("Ingresa un precio de apertura válido.");
-      setTradeFormSuccess(null);
-      return;
-    }
-
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setTradeFormError("Ingresa una cantidad válida.");
-      setTradeFormSuccess(null);
-      return;
-    }
-
-    const computedValue = amount * openPrice;
-    const openValueFiat = Number.isFinite(openValueFiatInput) && openValueFiatInput > 0
-      ? openValueFiatInput
-      : computedValue;
-
-    const dateValue = tradeForm.openDate ? new Date(tradeForm.openDate) : new Date();
-    if (Number.isNaN(dateValue.getTime())) {
-      setTradeFormError("Ingresa una fecha válida en formato ISO.");
-      setTradeFormSuccess(null);
-      return;
-    }
-
-    const fiatCurrency = (selectedOperation.fiatCurrency || "USD").toUpperCase();
-    const feeCurrency = (tradeForm.feeCurrency || fiatCurrency).toUpperCase();
-    if (!Number.isFinite(closeFeeAmount) || closeFeeAmount < 0) {
-      setTradeFormError("Ingresa un fee de cierre válido.");
-      setTradeFormSuccess(null);
-      return;
-    }
-    let openFeeUsd = 0;
-
-    if (Number.isFinite(feeAmount) && feeAmount > 0) {
-      if (feeCurrency === "BNB") {
-        try {
-          const res = await fetch("https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT");
-          if (res.ok) {
-            const data = await res.json();
-            const bnbUsdt = parseFloat(data?.price);
-            if (Number.isFinite(bnbUsdt) && bnbUsdt > 0) {
-              openFeeUsd = feeAmount * bnbUsdt * (selectedOperation.usdtUsdRate ?? 1);
-            } else {
-              openFeeUsd = feeAmount * (selectedOperation.usdtUsdRate ?? 1);
-            }
-          } else {
-            openFeeUsd = feeAmount * (selectedOperation.usdtUsdRate ?? 1);
-          }
-        } catch (conversionErr) {
-          console.warn("No se pudo convertir fee BNB a USD", conversionErr);
-          openFeeUsd = feeAmount * (selectedOperation.usdtUsdRate ?? 1);
-        }
-      } else if (feeCurrency === "USDT") {
-        openFeeUsd = feeAmount * (selectedOperation.usdtUsdRate ?? 1);
-      } else {
-        openFeeUsd = feeAmount;
-      }
-    }
-    if (openFeeUsd > 0) {
-      openFeeUsd = Number(openFeeUsd.toFixed(8));
-    }
-
-    const txType = selectedOperation.action === "buy" ? "long" : "short";
-
-    // Construir plan de cierre FIFO con la cantidad realmente ejecutada
-    const positions = openPositionsByAssetRef.current.get(selectedOperation.assetId);
-    const entriesSource =
-      selectedOperation.action === "sell" ? positions?.longs ?? [] : positions?.shorts ?? [];
-    // cantidad ejecutada en unidades de base
-    const executedBaseUnits = amount;
-    let remainingBase = executedBaseUnits;
-    const closeValueDecimals = (() => {
-      const q = selectedOperation.quoteAsset?.toUpperCase?.() ?? selectedOperation.quoteAsset;
-      if (q === "USDT") return 8;
-      if (q === "USD" || q === "PEN") return 3;
-      return 2;
-    })();
-
-    // Cerrar sólo si es rentable según la lógica de plan (profit > 0)
-    let closeEntries: Array<{ id: string; amount: number; closeValueFiat: number; closePrice: number }> = [];
-    if (entriesSource.length > 0 && executedBaseUnits > BASE_TOLERANCE) {
-      const tempOp: Operation = {
-        ...selectedOperation,
-        // usar el precio de apertura ingresado por el usuario
-        price: openPrice,
-        suggestedBaseAmount: executedBaseUnits,
-      };
-      const plan = buildClosurePlan(
-        tempOp,
-        entriesSource,
-        selectedOperation.action === "sell" ? "sell" : "buy"
-      );
-      if (plan) {
-        closeEntries = plan.entries.map(e => ({
-          id: e.id,
-          amount: Number(e.amount.toFixed(8)),
-          closeValueFiat: Number(e.closeValueFiat.toFixed(closeValueDecimals)),
-          closePrice: openPrice,
-        }));
-        remainingBase = Number(Math.max(0, executedBaseUnits - plan.baseUsed).toFixed(8));
-      } else {
-        // no hay cierres rentables -> mantener posiciones abiertas y abrir nueva si corresponde
-        remainingBase = executedBaseUnits;
-      }
-    }
-
-    // Prorrateo de fee de cierre total ingresado
-    const closings = closeEntries;
-    const totalCloseFee = Math.max(0, closeFeeAmount);
-    let remainingFee = totalCloseFee;
-    const totalCloseValue = closings.reduce((sum, c) => sum + (c.closeValueFiat || 0), 0);
-    const feeShares = closings.map((c, idx) => {
-      if (totalCloseFee === 0) return 0;
-      let share = 0;
-      if (totalCloseValue > 0) {
-        share = (c.closeValueFiat / totalCloseValue) * totalCloseFee;
-      } else {
-        share = totalCloseFee / (closings.length || 1);
-      }
-      if (idx === closings.length - 1) {
-        share = remainingFee;
-      }
-      const rounded = Number(share.toFixed(8));
-      remainingFee = Number((remainingFee - rounded).toFixed(8));
-      return rounded;
-    });
-
-    try {
-      setSavingTransaction(true);
-      setTradeFormError(null);
-      // 1) Cerrar posiciones (si corresponde)
-      if (closings.length) {
-        const closeDateIso = new Date().toISOString();
-        await Promise.all(
-          closings.map((close, index) =>
-            api.put(`/transactions/${close.id}/close`, {
-              closeDate: closeDateIso,
-              closePrice: close.closePrice,
-              closeValueFiat: close.closeValueFiat,
-              closeFee: feeShares[index],
-            })
-          )
-        );
-      }
-
-      // 2) Abrir nueva posición sólo si sobra base (ejecutaste más que el total cerrado)
-      const residualBase = Number(Math.max(0, remainingBase).toFixed(8));
-      if (residualBase > BASE_TOLERANCE) {
-        const residualFiatDecimals = (() => {
-          const q = selectedOperation.fiatCurrency?.toUpperCase?.() ?? selectedOperation.fiatCurrency;
-          if (q === "USDT") return 8;
-          if (q === "USD" || q === "PEN") return 3;
-          return 2;
-        })();
-        const payload = {
-          asset: selectedOperation.assetId,
-          type: txType,
-          fiatCurrency,
-          openDate: dateValue.toISOString(),
-          openPrice,
-          amount: residualBase,
-          openValueFiat: Number((residualBase * openPrice).toFixed(residualFiatDecimals)),
-          openFee: openFeeUsd,
-        };
-        await api.post("/transactions", payload);
-      }
-
-      const successLabel = txType === "long" ? "long" : "short";
-      await loadData();
-      setTradeFormSuccess(`Transacción ${successLabel} guardada correctamente.`);
-      setTimeout(() => {
-        closeTradeForm();
-      }, 800);
-    } catch (err) {
-      console.error("❌ Error guardando transacción:", err);
-      setTradeFormError("No se pudo guardar la transacción. Intenta nuevamente.");
-      setTradeFormSuccess(null);
-    } finally {
-      setSavingTransaction(false);
-    }
-  }, [closeTradeForm, loadData, selectedOperation, tradeForm]);
 
   const content = useMemo(() => {
     if (loading && !refreshing) {
@@ -1211,15 +1235,20 @@ export default function TransaccionesScreen() {
       >
         {operations.map(op => {
           const isActionSupported = op.action === "sell" || op.action === "buy";
-          const tradeHint = op.action === "sell" ? "Pulsa para registrar un short sugerido." : "Pulsa para registrar un long sugerido.";
+          const tradeHint =
+            op.action === "sell"
+              ? "Pulsa para ver la sugerencia de venta."
+              : "Pulsa para ver la sugerencia de compra.";
+          const overrideState = priceOverrides[op.id];
+          const simulatedPriceText = overrideState?.input ?? "";
+          const simulationResult = overrideState?.result ?? null;
+          const simulationIsAction = simulationResult?.status === "action";
+          const simulationIsInvalid = simulationResult?.status === "invalid";
+          const simulationText = simulationResult?.message;
+          const overrideVisible = overrideState?.visible ?? false;
+
           return (
-            <TouchableOpacity
-              key={op.id}
-              style={[styles.card, !isActionSupported && styles.cardDisabled]}
-              onPress={() => handleOperationPress(op)}
-              activeOpacity={isActionSupported ? 0.8 : 1}
-              disabled={!isActionSupported}
-            >
+            <View key={op.id} style={[styles.card, !isActionSupported && styles.cardDisabled]}>
               <Text style={styles.cardTitle}>{op.symbol}</Text>
               <Text style={styles.detail}>
                 {op.priceLabel ?? "Precio actual"}: ${op.price.toFixed(4)}
@@ -1230,28 +1259,77 @@ export default function TransaccionesScreen() {
                   {op.sellPrice?.toFixed(4) ?? "N/D"}
                 </Text>
               )}
-              <Text style={styles.detail}>Capital asignado: ${op.allocation.toFixed(2)}</Text>
-              <Text style={styles.detail}>
-                Objetivo base ({op.baseAsset}): ${op.targetBaseUsd.toFixed(2)} | Actual: $
-                {op.actualBaseUsd.toFixed(2)}
-              </Text>
-              <Text style={styles.detail}>
-                Objetivo quote ({op.quoteAsset}): ${op.targetQuoteUsd.toFixed(2)} | Actual: $
-                {op.actualQuoteUsd.toFixed(2)}
-              </Text>
-              {Number.isFinite(op.targetBasePercent) && op.allocation > 0 && (
-                <Text style={styles.detail}>
-                  Proporción base objetivo: {(op.targetBasePercent * 100).toFixed(2)}%
-                </Text>
-              )}
               <Text style={styles.action}>{op.actionMessage}</Text>
-              {isActionSupported && <Text style={styles.hint}>{tradeHint}</Text>}
-            </TouchableOpacity>
+
+              {isActionSupported ? (
+                <>
+                  <View style={styles.customToggleRow}>
+                    <TouchableOpacity
+                      style={styles.customToggle}
+                      onPress={() => togglePriceOverride(op.id)}
+                    >
+                      <Text style={styles.customToggleIcon}>{overrideVisible ? "✖️" : "🧮"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {overrideVisible ? (
+                    <View style={styles.customSection}>
+                      <Text style={styles.customLabel}>Simular con otro precio</Text>
+                      <TextInput
+                        style={styles.customInput}
+                        value={simulatedPriceText}
+                        placeholder={`Ej. ${op.price.toFixed(4)}`}
+                        onChangeText={text => handleSimulatedPriceChange(op, text)}
+                        keyboardType="numeric"
+                      />
+                      {simulationText ? (
+                        <Text
+                          style={[
+                            styles.customResult,
+                            simulationIsAction && styles.customResultOk,
+                            (simulationResult?.status === "none" || simulationIsInvalid) && styles.customResultWarn,
+                          ]}
+                        >
+                          {simulationText}
+                        </Text>
+                      ) : null}
+                      {simulationIsAction &&
+                        simulationResult?.suggestedBaseAmount != null &&
+                        simulationResult?.suggestedFiatValue != null && (
+                          <Text style={styles.customDetail}>
+                            Cantidad sugerida: {formatAssetAmount(simulationResult.suggestedBaseAmount, op.baseAsset)}{' '}
+                            {op.baseAsset} ({formatQuoteValue(simulationResult.suggestedFiatValue, op.quoteAsset)})
+                          </Text>
+                        )}
+                    </View>
+                  ) : null}
+                  <TouchableOpacity
+                    style={styles.cardButton}
+                    onPress={() => handleOperationPress(op)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.cardButtonText}>
+                      {op.action === "buy" ? "Ver sugerencia de compra" : "Ver sugerencia de venta"}
+                    </Text>
+                  </TouchableOpacity>
+                  <Text style={styles.hint}>{tradeHint}</Text>
+                </>
+              ) : null}
+            </View>
           );
         })}
       </ScrollView>
     );
-  }, [error, handleOperationPress, loading, operations, refreshHandler, refreshing]);
+  }, [
+    error,
+    handleOperationPress,
+    handleSimulatedPriceChange,
+    loading,
+    operations,
+    priceOverrides,
+    refreshHandler,
+    refreshing,
+    togglePriceOverride,
+  ]);
 
   return (
     <View style={styles.container}>
@@ -1259,129 +1337,35 @@ export default function TransaccionesScreen() {
       {content}
 
       <Modal
-        visible={tradeFormVisible}
+        visible={suggestionModalVisible}
         transparent
         animationType="slide"
-        onRequestClose={closeTradeForm}
+        onRequestClose={closeSuggestionModal}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>
-              {selectedOperation?.action === "buy" ? "Abrir long" : "Abrir short"}{" "}
-              {selectedOperation?.symbol ? `(${selectedOperation.symbol})` : ""}
-            </Text>
-            {tradeForm ? (
+            {selectedOperation ? (
               <>
+                <Text style={styles.modalTitle}>{selectedOperation.symbol}</Text>
                 <Text style={styles.modalLabel}>
-                  Quote (fiat): {selectedOperation?.fiatCurrency ?? "USD"}
+                  Precio actual: ${selectedOperation.price.toFixed(4)}
                 </Text>
-
-                <Text style={styles.modalLabel}>Fecha de apertura (ISO)</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  value={tradeForm.openDate}
-                  onChangeText={text => handleTradeFormChange("openDate", text)}
-                  placeholder="2024-01-01T12:00:00.000Z"
-                />
-
-                <Text style={styles.modalLabel}>Precio de apertura</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  value={tradeForm.openPrice}
-                  onChangeText={text => handleTradeFormChange("openPrice", text)}
-                  keyboardType="numeric"
-                />
-
-                <Text style={styles.modalLabel}>Cantidad (asset)</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  value={tradeForm.amount}
-                  onChangeText={text => handleTradeFormChange("amount", text)}
-                  keyboardType="numeric"
-                />
-
-                <Text style={styles.modalLabel}>Valor total en fiat</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  value={tradeForm.openValueFiat}
-                  onChangeText={text => handleTradeFormChange("openValueFiat", text)}
-                  keyboardType="numeric"
-                />
-
-                <Text style={styles.modalLabel}>Fee de apertura (opcional)</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  value={tradeForm.openFee}
-                  onChangeText={text => handleTradeFormChange("openFee", text)}
-                  keyboardType="numeric"
-                />
-
-                {selectedOperation?.closingPositions?.length ? (
-                  <>
-                    <Text style={styles.modalLabel}>
-                      Fee de cierre total (se prorrateará entre {selectedOperation.closingPositions.length}{" "}
-                      operación{selectedOperation.closingPositions.length > 1 ? "es" : ""})
-                    </Text>
-                    <TextInput
-                      style={styles.modalInput}
-                      value={tradeForm.closeFee}
-                      onChangeText={text => handleTradeFormChange("closeFee", text)}
-                      keyboardType="numeric"
-                      placeholder="0"
-                    />
-                  </>
-                ) : null}
-
-                {selectedOperation?.isBinance ? (
-                  <>
-                    <Text style={styles.modalLabel}>Moneda del fee</Text>
-                    <View style={styles.chipRow}>
-                      {["USDT", "BNB"].map(currency => {
-                        const active = tradeForm.feeCurrency === currency;
-                        return (
-                          <TouchableOpacity
-                            key={currency}
-                            style={[styles.chip, active && styles.chipActive]}
-                            onPress={() => handleTradeFormChange("feeCurrency", currency)}
-                          >
-                            <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                              {currency}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                    <Text style={styles.modalHint}>
-                      El fee se convertirá automáticamente a USD al guardar.
-                    </Text>
-                  </>
-                ) : (
-                  <Text style={styles.modalHint}>
-                    El fee se convertirá automáticamente a USD al guardar.
-                  </Text>
-                )}
-
-                {tradeFormError && <Text style={styles.error}>{tradeFormError}</Text>}
-                {tradeFormSuccess && <Text style={styles.success}>{tradeFormSuccess}</Text>}
-
-                <View style={styles.modalButtonRow}>
-                  <View style={styles.modalButton}>
-                    <Button
-                      title={
-                        savingTransaction
-                          ? "Guardando..."
-                          : selectedOperation?.action === "buy"
-                          ? "Guardar long"
-                          : "Guardar short"
-                      }
-                      onPress={handleSaveTransaction}
-                      disabled={savingTransaction}
-                    />
-                  </View>
-                  <View style={styles.modalButton}>
-                    <Button title="Cerrar" color="#757575" onPress={closeTradeForm} />
-                  </View>
-                </View>
+                <Text style={styles.modalLabel}>
+                  {selectedOperation.action === "buy" ? "Total a comprar" : "Total a vender"}
+                </Text>
+                <Text style={styles.modalValue}>
+                  {formatAssetAmount(selectedOperation.suggestedBaseAmount, selectedOperation.baseAsset)}{' '}
+                  {selectedOperation.baseAsset} ({
+                    formatQuoteValue(selectedOperation.suggestedFiatValue, selectedOperation.quoteAsset)
+                  })
+                </Text>
+                <TouchableOpacity
+                  style={[styles.cardButton, styles.modalCloseButton]}
+                  onPress={closeSuggestionModal}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.cardButtonText}>Cerrar</Text>
+                </TouchableOpacity>
               </>
             ) : (
               <ActivityIndicator size="large" />
@@ -1623,28 +1607,66 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#0d47a1",
   },
-  chipRow: {
-    flexDirection: "row",
+  customSection: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#e0e0e0",
     gap: 8,
   },
-  chip: {
+  customToggleRow: {
+    marginTop: 12,
+    alignItems: "flex-start",
+  },
+  customToggle: {
+    paddingHorizontal: 10,
     paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 16,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: "#90a4ae",
     backgroundColor: "#fff",
   },
-  chipActive: {
-    backgroundColor: "#1b5e20",
-    borderColor: "#1b5e20",
+  customToggleIcon: {
+    fontSize: 18,
   },
-  chipText: {
+  customLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+  },
+  customInput: {
+    borderWidth: 1,
+    borderColor: "#d0d0d0",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 16,
+    color: "#333",
+  },
+  customResult: {
     fontSize: 14,
-    color: "#37474f",
+    color: "#333",
   },
-  chipTextActive: {
+  customResultOk: {
+    color: "#2e7d32",
+  },
+  customResultWarn: {
+    color: "#c62828",
+  },
+  customDetail: {
+    fontSize: 13,
+    color: "#555",
+  },
+  cardButton: {
+    marginTop: 8,
+    backgroundColor: "#1976d2",
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  cardButtonText: {
     color: "#fff",
+    fontWeight: "600",
   },
   modalOverlay: {
     flex: 1,
@@ -1668,30 +1690,15 @@ const styles = StyleSheet.create({
   modalLabel: {
     fontSize: 14,
     color: "#424242",
+    marginBottom: 4,
   },
-  modalInput: {
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  modalValue: {
     fontSize: 16,
-    backgroundColor: "#fafafa",
-  },
-  modalButtonRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  modalButton: {
-    flex: 1,
-  },
-  success: {
+    fontWeight: "600",
     color: "#1b5e20",
-    fontSize: 15,
+    marginBottom: 12,
   },
-  modalHint: {
-    fontSize: 13,
-    color: "#455a64",
+  modalCloseButton: {
+    marginTop: 8,
   },
 });

@@ -83,7 +83,8 @@ export default function HistoricoScreen() {
   const [assetFilter, setAssetFilter] = useState<string>("all");
   const [assetOptions, setAssetOptions] = useState<string[]>([]);
   const [penUsdRate, setPenUsdRate] = useState<number | null>(null);
-  const [usdtUsdPrice, setUsdtUsdPrice] = useState<number | null>(null);
+  const [usdtSellPrice, setUsdtSellPrice] = useState<number | null>(null);
+  const [usdtBuyPrice, setUsdtBuyPrice] = useState<number | null>(null);
   const [vooPrice, setVooPrice] = useState<number | null>(null);
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
   const priceSocketRef = useRef<WebSocket | null>(null);
@@ -111,12 +112,28 @@ export default function HistoricoScreen() {
       setAssetOptions(symbols);
 
       const configs = Array.isArray(configRes.data) ? configRes.data : [];
-      const usdtPriceDoc = configs.find(doc =>
-        ["PrecioVentaUSDT", "lastPriceUsdtSell", "PrecioCompraUSDT", "lastPriceUsdtBuy"].includes(
-          doc.name
-        )
-      );
-      setUsdtUsdPrice(usdtPriceDoc?.total ?? null);
+      const configMap = new Map<string, number>();
+      configs.forEach(doc => {
+        if (typeof doc.total === "number" && !Number.isNaN(doc.total)) {
+          configMap.set(doc.name, doc.total);
+        }
+      });
+
+      const sellPrice =
+        configMap.get("PrecioVentaUSDT") ??
+        configMap.get("lastPriceUsdtSell") ??
+        configMap.get("PrecioCompraUSDT") ??
+        configMap.get("lastPriceUsdtBuy") ??
+        null;
+      const buyPrice =
+        configMap.get("PrecioCompraUSDT") ??
+        configMap.get("lastPriceUsdtBuy") ??
+        configMap.get("PrecioVentaUSDT") ??
+        configMap.get("lastPriceUsdtSell") ??
+        null;
+
+      setUsdtSellPrice(sellPrice);
+      setUsdtBuyPrice(buyPrice);
     } catch (err) {
       console.error("❌ Error cargando transacciones:", err);
       setError("No se pudieron cargar las transacciones.");
@@ -285,7 +302,10 @@ export default function HistoricoScreen() {
   const getCurrentPrice = (tx: TransactionDoc) => {
     const symbolUpper = getAssetSymbol(tx.asset)?.toUpperCase?.() ?? "";
     if (symbolUpper === "USDTUSD") {
-      return usdtUsdPrice;
+      if (tx.type === "long") {
+        return usdtSellPrice ?? usdtBuyPrice ?? null;
+      }
+      return usdtBuyPrice ?? usdtSellPrice ?? null;
     }
     if (symbolUpper === "USDPEN") {
       return penUsdRate ? Number((1 / penUsdRate).toFixed(6)) : null;
@@ -342,7 +362,7 @@ export default function HistoricoScreen() {
       }
     });
     return { closedUsd, openUsd, total: closedUsd + openUsd };
-  }, [filteredTransactions, penUsdRate, livePrices, usdtUsdPrice, vooPrice]);
+  }, [filteredTransactions, penUsdRate, livePrices, usdtSellPrice, usdtBuyPrice, vooPrice]);
 
   const renderItem = ({ item }: { item: TransactionDoc }) => {
     const symbol = getAssetSymbol(item.asset);

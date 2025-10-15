@@ -165,6 +165,40 @@ export const putAssets = async (req, res) => {
       }
     }
 
+    if (Object.prototype.hasOwnProperty.call(req.body, "minPriceSevenYear")) {
+      const value = req.body.minPriceSevenYear;
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        return res
+          .status(400)
+          .json({ error: "minPriceSevenYear debe ser un número válido mayor o igual a 0" });
+      }
+      asset.minPriceSevenYear = parsed;
+      hasUpdates = true;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "maxPriceSevenYear")) {
+      const value = req.body.maxPriceSevenYear;
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return res
+          .status(400)
+          .json({ error: "maxPriceSevenYear debe ser un número válido mayor a 0" });
+      }
+      asset.maxPriceSevenYear = parsed;
+      hasUpdates = true;
+    }
+
+    if (
+      asset.minPriceSevenYear != null &&
+      asset.maxPriceSevenYear != null &&
+      asset.minPriceSevenYear > asset.maxPriceSevenYear
+    ) {
+      return res
+        .status(400)
+        .json({ error: "minPriceSevenYear no puede ser mayor que maxPriceSevenYear" });
+    }
+
     if (!hasUpdates) {
       return res
         .status(400)

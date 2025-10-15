@@ -362,24 +362,34 @@ export default function Index() {
     });
   }, [stockAssets, stockInputs, vooMarketPrice]);
 
-  const effectiveUsdTotal = useMemo(() => {
-    return !Number.isNaN(parsedUsd) ? parsedUsd : usdConfig?.total ?? 0;
-  }, [parsedUsd, usdConfig]);
+  const usdtSellPrice = useMemo(() => {
+    const raw = Number(usdtSellConfig?.total);
+    return Number.isFinite(raw) && raw > 0 ? raw : 1;
+  }, [usdtSellConfig]);
 
-  const effectivePenTotal = useMemo(() => {
-    return !Number.isNaN(parsedPen) ? parsedPen : penConfig?.total ?? 0;
-  }, [parsedPen, penConfig]);
+  const adjustedBinanceBalances = useMemo(() => {
+    return binanceBalances.map(balance => {
+      if (balance.asset === "USDT") {
+        return {
+          ...balance,
+          usdValue: balance.total * usdtSellPrice,
+        };
+      }
+      return balance;
+    }).filter(b => b.usdValue > 0);
+  }, [binanceBalances, usdtSellPrice]);
+
+  const usdTotalFromApi = binanceTotals?.usd ?? 0;
+  const penTotalFromApi = binanceTotals?.pen ?? 0;
 
   const extendedBalances = useMemo(() => {
     const list: { asset: string; total: number; usdValue: number }[] = [];
-    binanceBalances.forEach(balance => {
-      if (balance?.usdValue > 0) {
-        list.push({
-          asset: balance.asset,
-          total: balance.total,
-          usdValue: balance.usdValue,
-        });
-      }
+    adjustedBinanceBalances.forEach(balance => {
+      list.push({
+        asset: balance.asset,
+        total: balance.total,
+        usdValue: balance.usdValue,
+      });
     });
 
     stockBalances.forEach(balance => {
@@ -388,18 +398,16 @@ export default function Index() {
       }
     });
 
-    if (effectiveUsdTotal > 0) {
-      list.push({ asset: "USD", total: effectiveUsdTotal, usdValue: effectiveUsdTotal });
+    if (usdTotalFromApi > 0) {
+      list.push({ asset: "USD", total: usdTotalFromApi, usdValue: usdTotalFromApi });
     }
-    if (effectivePenTotal > 0) {
-      const usdEquivalent = penUsdRate ? effectivePenTotal * penUsdRate : 0;
-      if (usdEquivalent > 0) {
-        list.push({ asset: "PEN", total: effectivePenTotal, usdValue: usdEquivalent });
-      }
+    if (penTotalFromApi > 0) {
+      const usdEquivalent = penUsdRate ? penTotalFromApi * penUsdRate : 0;
+      list.push({ asset: "PEN", total: penTotalFromApi, usdValue: usdEquivalent });
     }
 
-    return list;
-  }, [binanceBalances, stockBalances, effectiveUsdTotal, effectivePenTotal, penUsdRate]);
+    return list.filter(item => item.usdValue > 0);
+  }, [adjustedBinanceBalances, stockBalances, usdTotalFromApi, penTotalFromApi, penUsdRate]);
 
   const totalBalance = useMemo(() => {
     return extendedBalances.reduce((acc, item) => acc + item.usdValue, 0);
