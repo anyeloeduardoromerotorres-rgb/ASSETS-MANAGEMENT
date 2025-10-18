@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   Modal,
   TextInput,
+  Alert,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import api from "../constants/api";
@@ -105,6 +106,17 @@ type PriceOverrideState = {
   input: string;
   result: SimulationResult | null;
   visible: boolean;
+};
+
+type RegisterFormState = {
+  type: "long" | "short";
+  openPrice: string;
+  amount: string;
+  openValueFiat: string;
+  fiatCurrency: string;
+  openFee: string;
+  openFeeCurrency: string;
+  openDate: string;
 };
 
 type TransactionDoc = {
@@ -446,6 +458,11 @@ export default function TransaccionesScreen() {
   const [suggestionModalVisible, setSuggestionModalVisible] = useState(false);
   const openPositionsByAssetRef = useRef<Map<string, OpenPositionsByAsset>>(new Map());
   const [priceOverrides, setPriceOverrides] = useState<Record<string, PriceOverrideState>>({});
+  const [registerModalVisible, setRegisterModalVisible] = useState(false);
+  const [registerTarget, setRegisterTarget] = useState<Operation | null>(null);
+  const [registerForm, setRegisterForm] = useState<RegisterFormState>(() => createEmptyRegisterForm());
+  const [registerError, setRegisterError] = useState<string | null>(null);
+  const [registerSubmitting, setRegisterSubmitting] = useState(false);
 
   const loadData = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
@@ -818,6 +835,11 @@ export default function TransaccionesScreen() {
             return absBaseAmount * (price as number);
           })();
 
+          // Skip if below $10 threshold
+          if (quoteValue < 10) {
+            return;
+          }
+
           const approxLabel =
             quoteUpper === "USD" || quoteUpper === "USDT" || quoteUpper === "USDC"
               ? `$${absDiffUsd.toFixed(2)}`
@@ -1035,6 +1057,14 @@ export default function TransaccionesScreen() {
         return suggestedBaseAmount * price;
       })();
 
+      // Skip suggesting operations if below $10 (both buy and sell)
+      if (suggestedFiatValue < 10) {
+        return {
+          status: "none",
+          message: "Operación omitida: monto menor a $10.",
+        };
+      }
+
       const approxLabel =
         quoteUpper === "USD" || quoteUpper === "USDT" || quoteUpper === "USDC"
           ? `$${Math.abs(baseDiffUsd).toFixed(2)}`
@@ -1183,20 +1213,164 @@ export default function TransaccionesScreen() {
     });
   }, []);
 
-  const handleOperationPress = useCallback(
-    (operation: Operation) => {
-      if (operation.action !== "sell" && operation.action !== "buy") return;
+  const resolveOperationForAction = useCallback(
+    (operation: Operation): Operation => {
       const override = priceOverrides[operation.id];
       const overrideResult = override?.result;
-      const derivedOperation =
-        overrideResult?.status === "action" && overrideResult.operation
-          ? overrideResult.operation
-          : operation;
-      setSelectedOperation(derivedOperation);
-      setSuggestionModalVisible(true);
+      if (overrideResult?.status === "action" && overrideResult.operation) {
+        return overrideResult.operation;
+      }
+      return operation;
     },
     [priceOverrides]
   );
+
+  const formatNumberForInput = (value: number | null | undefined, precision = 6) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "";
+    return value.toFixed(precision);
+  };
+
+  const handleOperationPress = useCallback(
+    (operation: Operation) => {
+      if (operation.action !== "sell" && operation.action !== "buy") return;
+      const derivedOperation = resolveOperationForAction(operation);
+      setSelectedOperation(derivedOperation);
+      setSuggestionModalVisible(true);
+    },
+    [resolveOperationForAction]
+  );
+
+  const handleRegisterPress = useCallback(
+    (operation: Operation) => {
+      const derived = resolveOperationForAction(operation);
+      const defaultType: "long" | "short" = derived.action === "sell" ? "short" : "long";
+      const fiatCurrency = derived.quoteAsset?.toUpperCase?.() ?? "USDT";
+      const pricePrecision = fiatCurrency === "USDT" ? 8 : 6;
+      const defaultPrice = formatNumberForInput(derived.price, pricePrecision);
+      const defaultAmount = formatNumberForInput(derived.suggestedBaseAmount, 8);
+      const defaultFiat = formatNumberForInput(
+        derived.suggestedFiatValue ??
+          (typeof derived.price === "number" && typeof derived.suggestedBaseAmount === "number"
+            ? derived.price * derived.suggestedBaseAmount
+            : undefined),
+        fiatCurrency === "USD" ? 2 : fiatCurrency === "USDT" ? 8 : 4
+      );
+
+      setRegisterTarget(derived);
+      setRegisterForm({
+        type: defaultType,
+        openPrice: defaultPrice,
+        amount: defaultAmount,
+        openValueFiat: defaultFiat,
+        fiatCurrency,
+        openFee: "",
+        openFeeCurrency: derived.isBinance ? "BNB" : "USD",
+        openDate: "",
+      });
+      setRegisterError(null);
+      setRegisterModalVisible(true);
+    },
+    [resolveOperationForAction]
+  );
+
+  const closeRegisterModal = useCallback(() => {
+    setRegisterModalVisible(false);
+    setRegisterTarget(null);
+    setRegisterForm(createEmptyRegisterForm());
+    setRegisterError(null);
+  }, []);
+
+  const handleRegisterFieldChange = useCallback(
+    (field: keyof RegisterFormState, value: string) => {
+      setRegisterForm(prev => ({ ...prev, [field]: value }));
+    },
+    []
+  );
+
+  const recalculateRegisterFiat = useCallback(() => {
+    const price = parseNumberInput(registerForm.openPrice);
+    const amount = parseNumberInput(registerForm.amount);
+    if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(amount) || amount <= 0) {
+      setRegisterError("Ingresa precio y cantidad válidos para recalcular.");
+      return;
+    }
+    const computed = Number((price * amount).toFixed(8));
+    setRegisterForm(prev => ({ ...prev, openValueFiat: computed.toString() }));
+    setRegisterError(null);
+  }, [registerForm.amount, registerForm.openPrice]);
+
+  const handleRegisterSubmit = useCallback(async () => {
+    if (!registerTarget) return;
+
+    const price = parseNumberInput(registerForm.openPrice);
+    const amount = parseNumberInput(registerForm.amount);
+    let openValueFiat = parseNumberInput(registerForm.openValueFiat);
+    const fee = parseNumberInput(registerForm.openFee);
+
+    if (!Number.isFinite(price) || price <= 0) {
+      setRegisterError("Ingresa un precio válido.");
+      return;
+    }
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setRegisterError("Ingresa una cantidad válida.");
+      return;
+    }
+
+    if (!Number.isFinite(openValueFiat) || openValueFiat <= 0) {
+      openValueFiat = Number((price * amount).toFixed(8));
+    }
+
+    if (!Number.isFinite(openValueFiat) || openValueFiat <= 0) {
+      setRegisterError("Ingresa un monto en fiat válido.");
+      return;
+    }
+
+    if (openValueFiat < 10) {
+      setRegisterError("El monto debe ser al menos $10.");
+      return;
+    }
+
+    const fiatCurrency = (registerForm.fiatCurrency || registerTarget.quoteAsset || "USDT").toUpperCase();
+    const normalizedType: "long" | "short" = registerForm.type === "short" ? "short" : "long";
+    const feeCurrency = (registerForm.openFeeCurrency || fiatCurrency).toUpperCase();
+
+    const payload: Record<string, unknown> = {
+      asset: registerTarget.assetId,
+      type: normalizedType,
+      fiatCurrency,
+      openPrice: price,
+      amount,
+      openValueFiat,
+    };
+
+    if (Number.isFinite(fee) && fee > 0) {
+      payload.openFee = fee;
+      payload.openFeeCurrency = feeCurrency;
+    }
+
+    if (registerForm.openDate.trim().length > 0) {
+      const date = new Date(registerForm.openDate.trim());
+      if (Number.isNaN(date.getTime())) {
+        setRegisterError("Fecha inválida. Usa un formato ISO o deja el campo vacío.");
+        return;
+      }
+      payload.openDate = date.toISOString();
+    }
+
+    setRegisterSubmitting(true);
+    try {
+      await api.post("/transactions", payload);
+      Alert.alert("Transacción registrada", "La transacción se guardó correctamente.");
+      closeRegisterModal();
+      await loadData({ silent: true });
+    } catch (err: any) {
+      const message = err?.response?.data?.error ?? err?.message ?? "No se pudo registrar la transacción.";
+      setRegisterError(typeof message === "string" ? message : "No se pudo registrar la transacción.");
+    } finally {
+      setRegisterSubmitting(false);
+    }
+  }, [closeRegisterModal, loadData, registerForm, registerTarget]);
 
   const closeSuggestionModal = useCallback(() => {
     setSuggestionModalVisible(false);
@@ -1311,6 +1485,13 @@ export default function TransaccionesScreen() {
                       {op.action === "buy" ? "Ver sugerencia de compra" : "Ver sugerencia de venta"}
                     </Text>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.cardButton, styles.cardButtonSecondary]}
+                    onPress={() => handleRegisterPress(op)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.cardButtonText}>Registrar transacción</Text>
+                  </TouchableOpacity>
                   <Text style={styles.hint}>{tradeHint}</Text>
                 </>
               ) : null}
@@ -1329,6 +1510,7 @@ export default function TransaccionesScreen() {
     refreshHandler,
     refreshing,
     togglePriceOverride,
+    handleRegisterPress,
   ]);
 
   return (
@@ -1365,6 +1547,178 @@ export default function TransaccionesScreen() {
                   activeOpacity={0.85}
                 >
                   <Text style={styles.cardButtonText}>Cerrar</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <ActivityIndicator size="large" />
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={registerModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={closeRegisterModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            {registerTarget ? (
+              <>
+                <Text style={styles.modalTitle}>Registrar {registerTarget.symbol}</Text>
+                <Text style={styles.customDetail}>
+                  Base: {registerTarget.baseAsset} | Quote: {registerTarget.quoteAsset}
+                </Text>
+                {registerError ? (
+                  <Text style={[styles.customResult, styles.customResultWarn, styles.modalError]}>
+                    {registerError}
+                  </Text>
+                ) : null}
+                <Text style={styles.modalLabel}>Tipo de posición</Text>
+                <View style={styles.modalTypeRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.modalTypeButton,
+                      registerForm.type === "long" && styles.modalTypeButtonActive,
+                    ]}
+                    onPress={() => setRegisterForm(prev => ({ ...prev, type: "long" }))}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.modalTypeButtonText,
+                        registerForm.type === "long" && styles.modalTypeButtonTextActive,
+                      ]}
+                    >
+                      Long
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.modalTypeButton,
+                      registerForm.type === "short" && styles.modalTypeButtonActive,
+                    ]}
+                    onPress={() => setRegisterForm(prev => ({ ...prev, type: "short" }))}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.modalTypeButtonText,
+                        registerForm.type === "short" && styles.modalTypeButtonTextActive,
+                      ]}
+                    >
+                      Short
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.modalLabel}>Precio de apertura</Text>
+                <TextInput
+                  style={styles.customInput}
+                  value={registerForm.openPrice}
+                  onChangeText={value => handleRegisterFieldChange("openPrice", value)}
+                  keyboardType="numeric"
+                  placeholder="Precio (ej. 175.50)"
+                />
+
+                <Text style={styles.modalLabel}>Cantidad en base ({registerTarget.baseAsset})</Text>
+                <TextInput
+                  style={styles.customInput}
+                  value={registerForm.amount}
+                  onChangeText={value => handleRegisterFieldChange("amount", value)}
+                  keyboardType="numeric"
+                  placeholder="Cantidad (ej. 0.42)"
+                />
+
+                <Text style={styles.modalLabel}>Total en fiat ({registerForm.fiatCurrency || registerTarget.quoteAsset})</Text>
+                <TextInput
+                  style={styles.customInput}
+                  value={registerForm.openValueFiat}
+                  onChangeText={value => handleRegisterFieldChange("openValueFiat", value)}
+                  keyboardType="numeric"
+                  placeholder="Total (ej. 100.00)"
+                />
+                <TouchableOpacity
+                  style={styles.helperButton}
+                  onPress={recalculateRegisterFiat}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.helperButtonText}>Recalcular total con precio × cantidad</Text>
+                </TouchableOpacity>
+
+                <Text style={styles.modalLabel}>Moneda fiat</Text>
+                <TextInput
+                  style={styles.customInput}
+                  value={registerForm.fiatCurrency}
+                  onChangeText={value => handleRegisterFieldChange("fiatCurrency", value.toUpperCase())}
+                  autoCapitalize="characters"
+                  placeholder="USDT"
+                />
+
+                <Text style={styles.modalLabel}>Fee de apertura (opcional)</Text>
+                <TextInput
+                  style={styles.customInput}
+                  value={registerForm.openFee}
+                  onChangeText={value => handleRegisterFieldChange("openFee", value)}
+                  keyboardType="numeric"
+                  placeholder="0"
+                />
+
+                <Text style={styles.modalLabel}>Moneda del fee</Text>
+                <View style={styles.modalTypeRow}>
+                  {["BNB", "USDT", "USD"].map(currency => {
+                    const isActive = registerForm.openFeeCurrency === currency;
+                    return (
+                      <TouchableOpacity
+                        key={currency}
+                        style={[styles.modalTypeButton, isActive && styles.modalTypeButtonActive]}
+                        onPress={() => setRegisterForm(prev => ({ ...prev, openFeeCurrency: currency }))}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[styles.modalTypeButtonText, isActive && styles.modalTypeButtonTextActive]}
+                        >
+                          {currency}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <Text style={styles.modalLabel}>Fecha de apertura (opcional)</Text>
+                <TextInput
+                  style={styles.customInput}
+                  value={registerForm.openDate}
+                  onChangeText={value => handleRegisterFieldChange("openDate", value)}
+                  placeholder="Ej. 2024-05-30T14:30:00"
+                />
+
+                <TouchableOpacity
+                  style={[
+                    styles.cardButton,
+                    styles.cardButtonSecondary,
+                    registerSubmitting && styles.cardButtonDisabled,
+                  ]}
+                  onPress={handleRegisterSubmit}
+                  activeOpacity={0.8}
+                  disabled={registerSubmitting}
+                >
+                  <Text style={styles.cardButtonText}>
+                    {registerSubmitting ? "Guardando..." : "Registrar transacción"}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.cardButton,
+                    styles.cardButtonGhost,
+                    registerSubmitting && styles.cardButtonDisabled,
+                  ]}
+                  onPress={closeRegisterModal}
+                  activeOpacity={0.8}
+                  disabled={registerSubmitting}
+                >
+                  <Text style={styles.cardButtonText}>Cancelar</Text>
                 </TouchableOpacity>
               </>
             ) : (
@@ -1549,6 +1903,17 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
+const createEmptyRegisterForm = (): RegisterFormState => ({
+  type: "long",
+  openPrice: "",
+  amount: "",
+  openValueFiat: "",
+  fiatCurrency: "",
+  openFee: "",
+  openFeeCurrency: "USDT",
+  openDate: "",
+});
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -1664,6 +2029,15 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     alignItems: "center",
   },
+  cardButtonSecondary: {
+    backgroundColor: "#2e7d32",
+  },
+  cardButtonGhost: {
+    backgroundColor: "#546e7a",
+  },
+  cardButtonDisabled: {
+    opacity: 0.6,
+  },
   cardButtonText: {
     color: "#fff",
     fontWeight: "600",
@@ -1700,5 +2074,46 @@ const styles = StyleSheet.create({
   },
   modalCloseButton: {
     marginTop: 8,
+  },
+  modalTypeRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  modalTypeButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#90a4ae",
+    borderRadius: 8,
+    paddingVertical: 8,
+    alignItems: "center",
+    backgroundColor: "#fff",
+  },
+  modalTypeButtonActive: {
+    backgroundColor: "#1976d2",
+    borderColor: "#1976d2",
+  },
+  modalTypeButtonText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#333",
+  },
+  modalTypeButtonTextActive: {
+    color: "#fff",
+  },
+  modalError: {
+    marginTop: 4,
+  },
+  helperButton: {
+    marginTop: 8,
+    alignSelf: "flex-start",
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#1976d2",
+  },
+  helperButtonText: {
+    color: "#1976d2",
+    fontWeight: "600",
   },
 });

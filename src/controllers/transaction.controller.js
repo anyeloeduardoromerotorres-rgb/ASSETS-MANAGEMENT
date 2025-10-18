@@ -1,8 +1,16 @@
+import axios from "axios";
 import Transaction from "../models/transaction.model.js";
 import Asset from "../models/asset.model.js";
 import ConfigInfo from "../models/configInfo.model.js";
 
 const KNOWN_QUOTES = ["USDT", "USDC", "BUSD", "BTC", "ETH", "USD", "PEN"];
+
+const USDT_RATE_KEYS = [
+  "PrecioVentaUSDT",
+  "lastPriceUsdtSell",
+  "PrecioCompraUSDT",
+  "lastPriceUsdtBuy",
+];
 
 const splitSymbol = symbol => {
   if (typeof symbol !== "string" || symbol.length === 0) {
@@ -55,6 +63,64 @@ const adjustConfigTotal = async (names, delta) => {
   return doc;
 };
 
+async function getUsdtUsdRate() {
+  try {
+    const docs = await ConfigInfo.find({ name: { $in: USDT_RATE_KEYS } });
+    for (const key of USDT_RATE_KEYS) {
+      const doc = docs.find(item => item.name === key && Number.isFinite(item.total) && item.total > 0);
+      if (doc) {
+        return doc.total;
+      }
+    }
+  } catch (err) {
+    console.error("❌ Error obteniendo tipo de cambio USDT/USD:", err.message);
+  }
+  return 1;
+}
+
+async function getBnbUsdtPrice() {
+  try {
+    const response = await axios.get("https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT");
+    const price = parseFloat(response?.data?.price);
+    if (Number.isFinite(price) && price > 0) {
+      return price;
+    }
+  } catch (err) {
+    console.error("❌ Error obteniendo precio BNB/USDT:", err.message);
+  }
+  return null;
+}
+
+async function convertFeeToUsd(amount, currency, cache = {}) {
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const code = typeof currency === "string" && currency.trim().length > 0 ? currency.trim().toUpperCase() : "USD";
+  if (code === "USD") {
+    return Number(amount.toFixed(8));
+  }
+
+  if (!cache.usdtUsdRate) {
+    cache.usdtUsdRate = await getUsdtUsdRate();
+  }
+  const usdtUsdRate = Number.isFinite(cache.usdtUsdRate) && cache.usdtUsdRate > 0 ? cache.usdtUsdRate : 1;
+
+  if (code === "USDT" || code === "USDC" || code === "BUSD") {
+    return Number((amount * usdtUsdRate).toFixed(8));
+  }
+
+  if (code === "BNB") {
+    if (!cache.bnbUsdtPrice) {
+      cache.bnbUsdtPrice = await getBnbUsdtPrice();
+    }
+    const bnbUsdtPrice = Number.isFinite(cache.bnbUsdtPrice) && cache.bnbUsdtPrice > 0 ? cache.bnbUsdtPrice : null;
+    if (bnbUsdtPrice) {
+      return Number((amount * bnbUsdtPrice * usdtUsdRate).toFixed(8));
+    }
+  }
+
+  // fallback: devolver monto original si no se pudo convertir
+  return Number(amount.toFixed(8));
+}
+
 /**
  * Helper: calcula profit % y total en fiat
  */
@@ -88,13 +154,22 @@ export async function createTransaction(req, res) {
       quantity,
       openValueFiat,
       openFee,
+      openFeeCurrency,
     } = req.body;
 
     const normalizedAmount = amount ?? quantity;
     const parsedPrice = Number(openPrice);
     const parsedAmount = Number(normalizedAmount);
     const parsedOpenValue = Number(openValueFiat);
-    const parsedFee = Number(openFee ?? 0) || 0;
+    const rawFee = Number(openFee ?? 0);
+    const normalizedFee = Number.isFinite(rawFee) && rawFee > 0 ? rawFee : 0;
+    const feeCurrencyCode =
+      typeof openFeeCurrency === "string" && openFeeCurrency.trim().length > 0
+        ? openFeeCurrency.trim().toUpperCase()
+        : "USD";
+    const feeConversionCache = {};
+    const convertedOpenFee =
+      normalizedFee > 0 ? await convertFeeToUsd(normalizedFee, feeCurrencyCode, feeConversionCache) : 0;
     const openDateValue = openDate ? new Date(openDate) : new Date();
     const normalizedFiatCurrency =
       typeof fiatCurrency === "string" && fiatCurrency.trim().length > 0
@@ -127,7 +202,7 @@ export async function createTransaction(req, res) {
       openPrice: parsedPrice,
       amount: parsedAmount,
       openValueFiat: parsedOpenValue,
-      openFee: parsedFee,
+      openFee: convertedOpenFee,
       status: "open",
     });
 
@@ -189,7 +264,17 @@ export async function closeTransaction(req, res) {
     const closeDateValue = req.body.closeDate ? new Date(req.body.closeDate) : new Date();
     const closePrice = Number(req.body.closePrice);
     const closeValueFiat = Number(req.body.closeValueFiat);
-    const closeFee = Number(req.body.closeFee ?? 0) || 0;
+    const rawCloseFee = Number(req.body.closeFee ?? 0);
+    const normalizedCloseFee = Number.isFinite(rawCloseFee) && rawCloseFee > 0 ? rawCloseFee : 0;
+    const closeFeeCurrency =
+      typeof req.body.closeFeeCurrency === "string" && req.body.closeFeeCurrency.trim().length > 0
+        ? req.body.closeFeeCurrency.trim().toUpperCase()
+        : "USD";
+    const closeFeeConversionCache = {};
+    const closeFee =
+      normalizedCloseFee > 0
+        ? await convertFeeToUsd(normalizedCloseFee, closeFeeCurrency, closeFeeConversionCache)
+        : 0;
 
     if (
       !Number.isFinite(closePrice) ||
