@@ -64,6 +64,7 @@ export default function PrediccionScreen() {
   const [stockHoldings, setStockHoldings] = useState<StockHolding[]>([]);
   const [vooPrice, setVooPrice] = useState<number | null>(null);
   const [usdtSellPrice, setUsdtSellPrice] = useState<number | null>(null);
+  const [stockPrices, setStockPrices] = useState<Record<string, number>>({});
   const pricesRef = useRef<Record<string, number>>({});
   const [pricesTick, setPricesTick] = useState(0); // tick para re-render al llegar precios
   const priceWsRef = useRef<WebSocket | null>(null);
@@ -349,6 +350,63 @@ export default function PrediccionScreen() {
       console.error("❌ Error al traer assets:", err);
     }
   }, []);
+
+  const fetchStockPrice = useCallback(async (symbol: string) => {
+    try {
+      const res = await fetch(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`
+      );
+      const data = await res.json();
+      const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      if (typeof price === 'number' && price > 0) {
+        setStockPrices(prev => ({ ...prev, [symbol]: price }));
+      }
+    } catch (err) {
+      console.error(`❌ Error al traer precio de ${symbol}:`, err);
+    }
+  }, []);
+
+  useEffect(() => {
+    const symbols = stockHoldings.map(s => s.asset).filter(Boolean);
+    symbols.forEach(sym => fetchStockPrice(sym));
+  }, [stockHoldings, fetchStockPrice]);
+
+  // Calcular totalUsd exactamente como Balances
+  useEffect(() => {
+    const compute = () => {
+      if (!balances) return;
+      // USDT con precio configurado
+      const usdtPrice = usdtSellPrice ?? 1;
+      // Construir balances extendidos como en balances.tsx
+      const mapped = [
+        ...balances.map(b => {
+          if (b.asset === 'USDT') {
+            return { ...b, usdValue: b.total * usdtPrice };
+          }
+          const live = pricesRef.current[b.asset];
+          if (typeof live === 'number' && Number.isFinite(live) && b.total > 0) {
+            return { ...b, usdValue: b.total * live };
+          }
+          return b;
+        }),
+        // stocks desde holdings (precio VOO por ahora si aplica)
+        ...stockHoldings.map(holding => {
+          const { asset, total } = holding;
+          let price: number | null = null;
+          if (asset === 'VOO') price = typeof vooPrice === 'number' ? vooPrice : null;
+          else if (typeof stockPrices[asset] === 'number') price = stockPrices[asset];
+          const usdValue = price != null ? total * price : total;
+          return { asset, total, usdValue } as Balance;
+        }),
+        { asset: 'USD', total: totals.usd, usdValue: totals.usd },
+        { asset: 'PEN', total: totals.pen, usdValue: penPrice ? totals.pen * penPrice : 0 },
+      ].filter(b => b.usdValue > 0);
+
+      const sum = mapped.reduce((acc, b) => acc + (b.asset === 'PEN' && !penPrice ? 0 : b.usdValue), 0);
+      setTotalUsd(sum);
+    };
+    compute();
+  }, [balances, totals, usdtSellPrice, stockHoldings, vooPrice, penPrice, pricesTick]);
 
   const startPriceStream = useCallback((assets: string[]) => {
     try {

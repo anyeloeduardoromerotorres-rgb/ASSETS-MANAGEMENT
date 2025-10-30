@@ -42,6 +42,7 @@ export default function BalancesScreen() {
   const [penPrice, setPenPrice] = useState<number | null>(null);
   const [stockHoldings, setStockHoldings] = useState<StockHolding[]>([]);
   const [vooPrice, setVooPrice] = useState<number | null>(null);
+  const [stockPrices, setStockPrices] = useState<Record<string, number>>({});
   const [usdtSellPrice, setUsdtSellPrice] = useState<number | null>(null);
   const pricesRef = useRef<Record<string, number>>({}); // precio por asset (ej: BTC -> 63000)
   const [pricesTick, setPricesTick] = useState(0); // para forzar re-render al actualizar precios
@@ -50,18 +51,12 @@ export default function BalancesScreen() {
   const fetchBalances = async () => {
     try {
       const res = await api.get("/binance/balances");
-      // Logs para depurar lo que devuelve la API de Binance
-      try {
-        const flex = await api.get('/binance/earn/flexible');
-        console.log('[Balances][flexible] positionsCount =', flex.data?.positionsCount, 'assetsCount =', flex.data?.assetsCount);
-        console.log('[Balances][flexible] balances =', flex.data?.balances);
-      } catch (e) {
-        console.log('[Balances][flexible] no disponible:', (e as any)?.message);
-      }
+      // opcional: consultar flexible; sin logs
+      try { await api.get('/binance/earn/flexible'); } catch {}
       setBalances(res.data.balances);
       setTotals(res.data.totals);
     } catch (err) {
-      console.error("❌ Error al traer balances:", err);
+      // silenciado
     } finally {
       setLoading(false);
     }
@@ -74,10 +69,9 @@ export default function BalancesScreen() {
       const data = await res.json();
       if (data.result === "success" && data.rates?.USD) {
         setPenPrice(data.rates.USD);
-        console.log("📊 Precio PEN/USD actualizado:", data.rates.USD);
       }
     } catch (err) {
-      console.error("❌ Error al traer precio PEN/USD:", err);
+      // silenciado
     }
   };
 
@@ -92,12 +86,33 @@ export default function BalancesScreen() {
         data?.chart?.result?.[0]?.meta?.regularMarketPrice ?? null;
       if (price) {
         setVooPrice(price);
-        console.log("📊 Precio VOO actualizado:", price);
       }
     } catch (err) {
-      console.error("❌ Error al traer precio de VOO:", err);
+      // silenciado
     }
   };
+
+  // ✅ Precio para cualquier stock vía Yahoo (similar a VOO)
+  const fetchStockPrice = useCallback(async (symbol: string) => {
+    try {
+      const res = await fetch(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`
+      );
+      const data = await res.json();
+      const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      if (typeof price === 'number' && price > 0) {
+        setStockPrices(prev => ({ ...prev, [symbol]: price }));
+      }
+    } catch (err) {
+      // silenciado
+    }
+  }, []);
+
+  // Traer precios de stocks en holdings (incluye GLDM u otros)
+  useEffect(() => {
+    const symbols = stockHoldings.map(s => s.asset).filter(Boolean);
+    symbols.forEach(sym => fetchStockPrice(sym));
+  }, [stockHoldings, fetchStockPrice]);
 
   // ✅ WebSocket de Binance
   const initWebSocket = async () => {
@@ -110,19 +125,19 @@ export default function BalancesScreen() {
       );
       wsRef.current = ws;
 
-      ws.onopen = () => console.log("✅ WebSocket conectado");
+      ws.onopen = () => {};
       ws.onmessage = async (event) => {
         const data = JSON.parse(event.data);
         if (data.e === "outboundAccountPosition") {
-          console.log("🔄 Balance actualizado, recargando...");
+          // balance actualizado
           fetchBalances();
         }
       };
 
-      ws.onclose = () => console.log("⚠️ WebSocket cerrado");
-      ws.onerror = (err) => console.error("❌ WebSocket error:", err);
+      ws.onclose = () => {};
+      ws.onerror = () => {};
     } catch (err) {
-      console.error("❌ Error iniciando WebSocket:", err);
+      // silenciado
     }
   };
 
@@ -132,9 +147,9 @@ export default function BalancesScreen() {
       await api.put("/binance/keep-alive-listen-key", {
         listenKey: listenKeyRef.current,
       });
-      console.log("🔄 listenKey renovado");
+      // renovado
     } catch (err) {
-      console.error("❌ Error al renovar listenKey:", err);
+      // silenciado
     }
   };
 
@@ -239,9 +254,7 @@ export default function BalancesScreen() {
         const res = await api.get("/config-info/name/PrecioVentaUSDT");
         const price = Number(res.data?.total);
         if (Number.isFinite(price)) setUsdtSellPrice(price);
-      } catch (err) {
-        console.error("❌ Error obteniendo PrecioVentaUSDT:", err);
-      }
+      } catch (err) {}
     })();
     initWebSocket();
 
@@ -277,13 +290,11 @@ export default function BalancesScreen() {
 
   const stockBalances: Balance[] = stockHoldings.map((holding) => {
     const isVoo = holding.asset === "VOO";
-    const hasPrice = typeof vooPrice === "number";
+    const price = isVoo
+      ? (typeof vooPrice === 'number' ? vooPrice : null)
+      : (typeof stockPrices[holding.asset] === 'number' ? stockPrices[holding.asset] : null);
 
-    const usdValue = isVoo
-      ? hasPrice
-        ? holding.total * (vooPrice as number)
-        : holding.total
-      : holding.total;
+    const usdValue = price != null ? holding.total * price : holding.total;
 
     return {
       asset: holding.asset,

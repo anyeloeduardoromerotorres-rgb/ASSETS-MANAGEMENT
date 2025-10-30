@@ -35,6 +35,12 @@ type ConfigDoc = {
   total: number;
 };
 
+type AssetDoc = {
+  _id: string;
+  symbol: string;
+  type: "fiat" | "crypto" | "stock" | "commodity";
+};
+
 const formatFiat = (value: number | undefined, currency: string) => {
   if (value == null || Number.isNaN(value)) return "-";
   const upper = currency?.toUpperCase?.() ?? "USD";
@@ -88,6 +94,8 @@ export default function HistoricoScreen() {
   const [vooPrice, setVooPrice] = useState<number | null>(null);
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
   const priceSocketRef = useRef<WebSocket | null>(null);
+  const [assetTypeMap, setAssetTypeMap] = useState<Record<string, AssetDoc["type"]>>({});
+  const [stockPrices, setStockPrices] = useState<Record<string, number>>({});
 
   const loadTransactions = async ({ silent = false } = {}) => {
     try {
@@ -147,6 +155,24 @@ export default function HistoricoScreen() {
     loadTransactions();
   }, []);
 
+  useEffect(() => {
+    const fetchAssets = async () => {
+      try {
+        const res = await api.get<AssetDoc[]>("/assets");
+        const map: Record<string, AssetDoc["type"]> = {};
+        (res.data || []).forEach(asset => {
+          if (asset?.symbol) {
+            map[asset.symbol.toUpperCase()] = asset.type;
+          }
+        });
+        setAssetTypeMap(map);
+      } catch (err) {
+        console.error("❌ Error obteniendo assets para histórico:", err);
+      }
+    };
+    fetchAssets();
+  }, []);
+
   // Refrescar al enfocar la pantalla
   useFocusEffect(
     useCallback(() => {
@@ -198,6 +224,36 @@ export default function HistoricoScreen() {
       cancelled = true;
     };
   }, [transactions]);
+
+  const fetchStockPrice = useCallback(async (symbol: string) => {
+    try {
+      const res = await fetch(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      if (typeof price === "number" && price > 0) {
+        setStockPrices(prev => ({ ...prev, [symbol]: price }));
+      }
+    } catch (err) {
+      console.error(`❌ Error obteniendo precio de ${symbol}:`, err);
+    }
+  }, []);
+
+  useEffect(() => {
+    const symbols = Array.from(
+      new Set(
+        transactions
+          .map(tx => getAssetSymbol(tx.asset)?.toUpperCase?.() ?? "")
+          .filter(symbol => symbol && assetTypeMap[symbol] === "stock")
+      )
+    );
+    if (!symbols.length) return;
+    const missing = symbols.filter(symbol => stockPrices[symbol] == null);
+    if (!missing.length) return;
+    missing.forEach(fetchStockPrice);
+  }, [transactions, assetTypeMap, stockPrices, fetchStockPrice]);
 
   useEffect(() => {
     const openSymbols = Array.from(
@@ -313,6 +369,9 @@ export default function HistoricoScreen() {
     if (symbolUpper === "VOO") {
       return vooPrice;
     }
+    if (assetTypeMap[symbolUpper] === "stock") {
+      return stockPrices[symbolUpper] ?? null;
+    }
     return livePrices[symbolUpper] ?? null;
   };
 
@@ -362,7 +421,7 @@ export default function HistoricoScreen() {
       }
     });
     return { closedUsd, openUsd, total: closedUsd + openUsd };
-  }, [filteredTransactions, penUsdRate, livePrices, usdtSellPrice, usdtBuyPrice, vooPrice]);
+  }, [filteredTransactions, penUsdRate, livePrices, usdtSellPrice, usdtBuyPrice, vooPrice, stockPrices, assetTypeMap]);
 
   const renderItem = ({ item }: { item: TransactionDoc }) => {
     const symbol = getAssetSymbol(item.asset);
