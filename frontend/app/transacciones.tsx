@@ -1,3 +1,6 @@
+// Pantalla de Transacciones: administra rebalanceos sugeridos, operaciones abiertas,
+// inputs manuales y sincronización con datos de Binance, configuraciones propias
+// y precios externos. Este archivo concentra gran parte de la lógica de trading asistido.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
@@ -10,9 +13,15 @@ import {
   Modal,
   TextInput,
   Alert,
+  Platform,
 } from "react-native";
+import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { useFocusEffect } from "@react-navigation/native";
 import api from "../constants/api";
+import { calculateTotalBalances } from "../utils/calculateTotalBalances";
+
+// === Tipos de datos ===
+// Documentos de assets, balances, operaciones y formularios utilizados a lo largo de la pantalla.
 
 type AssetDocument = {
   _id: string;
@@ -32,11 +41,11 @@ type AssetDocument = {
       };
   exchangeName?: string;
 };
-
+//valor actual de cada activo en unidades del propio activo y su equivalente en USD
 type BalanceEntry = {
-  asset: string;
-  total: number;
-  usdValue: number;
+  asset: string; // Símbolo del activo (ej. BTC, USDT, USD)
+  total: number; // Cantidad total del activo en unidades del propio activo (ej. 0.52 BTC)
+  usdValue: number; // Equivalente en USD del total al precio vigente
 };
 
 type ConfigInfo = {
@@ -45,122 +54,134 @@ type ConfigInfo = {
   total: number;
 };
 
+// Operation: estructura de la sugerencia/acción de trading calculada para un activo.
+// Cada campo incluye comentario inline para aclarar su propósito en la UI y la lógica.
 type Operation = {
-  id: string;
-  assetId: string;
-  symbol: string;
-  baseAsset: string;
-  quoteAsset: string;
-  fiatCurrency: string;
-  exchangeId?: string | null;
-  exchangeName?: string | null;
-  isBinance: boolean;
-  usdtUsdRate: number;
-  allocation: number;
-  price: number;
-  priceLabel?: string;
-  mode?: "buy" | "sell" | "neutral";
-  action: "buy" | "sell";
+  id: string; // Identificador único de la operación sugerida o consolidada
+  assetId: string; // ID del activo en la base de datos interna
+  symbol: string; // Ticker/par del activo (ej. BTCUSDT)
+  baseAsset: string; // Activo base del par (ej. BTC en BTCUSDT)
+  quoteAsset: string; // Activo de cotización del par (ej. USDT en BTCUSDT)
+  fiatCurrency: string; // Moneda fiat de referencia para cálculos/reportes (ej. USD, PEN)
+  exchangeId?: string | null; // Identificador del exchange (si aplica) donde se ejecutaría
+  exchangeName?: string | null; // Nombre legible del exchange (ej. Binance)
+  isBinance: boolean; // Bandera rápida: true si la operación corresponde a Binance
+  usdtUsdRate: number; // Tipo de cambio USDT→USD usado para normalizar valores
+  allocation: number; // Porcentaje objetivo de asignación de este activo en el portafolio, que porcentaje del portafolio 
+  // se debe tener de este activo
+  price: number; // Precio de mercado actual (base/quote)
+  priceLabel?: string; // Precio formateado para mostrar en la UI
+  action: "buy" | "sell"; // Acción concreta sugerida a ejecutar
   // signo de la pendiente (slope) del activo: 1 = positiva, -1 = negativa, 0 = neutra
-  slopeSign?: 1 | 0 | -1;
-  buyPrice?: number;
-  sellPrice?: number;
-  suggestedBaseAmount: number;
-  suggestedFiatValue: number;
+  slopeSign?: 1 | 0 | -1; // Dirección de tendencia: 1 alcista, -1 bajista, 0 neutra
+  buyPrice?: number; // Precio recomendado para compra (límite o referencia) usado solo para USDTUSD/P2P
+  sellPrice?: number; // Precio recomendado para venta (límite o referencia) usado solo para USDTUSD/P2P
+  suggestedBaseAmount: number; // Cantidad base sugerida a comprar/vender (en unidades del baseAsset)
+  suggestedFiatValue: number; // Valor en fiat sugerido a mover (en fiatCurrency) misma cantidad que suggestedBaseAmount 
+  // pero en fiat
   closingPositions?: Array<{
-    id: string;
-    amount: number;
-    closeValueFiat: number;
-    closePrice: number;
-  }>;
-  residualBaseAmount?: number;
-  residualFiatValue?: number;
-  targetBaseUsd: number;
-  targetQuoteUsd: number;
-  targetBasePercent: number;
-  actualBaseUsd: number;
-  actualQuoteUsd: number;
-  baseDiffUsd: number;
-  actionMessage: string;
-  actualBaseAmountUnits?: number;
-  minPrice?: number;
-  maxPrice?: number;
-  baseHoldUsd?: number;
-  quoteHoldUsd?: number;
-  maxBaseAllowed?: number;
-  baseHoldingUsd?: number;
-  quoteHoldingUsd?: number;
-  slopeFraction?: number;
+    id: string; // ID de la posición/orden abierta a cerrar
+    amount: number; // Cantidad base a cerrar en esa posición
+    closeValueFiat: number; // Valor fiat estimado al cierre
+    closePrice: number; // Precio esperado/objetivo de cierre, se usa precio actual.
+  }>; // Plan de cierres parciales (si corresponde)
+  residualBaseAmount?: number; // Cantidad base remanente tras cerrar posiciones y ejecutar
+  residualFiatValue?: number; // Valor fiat remanente tras la ejecución
+  targetBaseUsd: number; // Valor objetivo en USD del activo base según la asignación
+  targetQuoteUsd: number; // Valor objetivo en USD del activo de cotización relacionado
+  targetBasePercent: number; // Porcentaje objetivo del activo base en el portafolio
+  actualBaseUsd: number; // Valor actual en USD del activo base en cartera
+  actualQuoteUsd: number; // Valor actual en USD del activo de cotización
+  baseDiffUsd: number; // Diferencia USD entre valor actual y objetivo del activo base = targetBaseUsd - actualBaseUsd
+  actionMessage: string; // Mensaje explicativo y amigable para la UI
+  actualBaseAmountUnits?: number; // Unidades actuales del activo base mantenidas
+  minPrice?: number; // Precio mínimo relevante (soporte) usado para contexto/validación, minimo en 7 años
+  maxPrice?: number; // Precio máximo relevante (resistencia) usado para contexto/validación, maximo en 7 años
+  baseHoldUsd?: number; // Monto USD del activo base actualmente retenido (en hold/bloqueado), esta determinado por el slope
+  quoteHoldUsd?: number; // Monto USD del activo de cotización retenido (en hold/bloqueado), esta determinado por el slope
+  maxBaseAllowed?: number; // Tope máximo permitido de unidades base (control de riesgo), cuando el slope es negativo este valor
+  // limita la cantidad máxima a comprar de la moneda base
+  baseHoldingUsd?: number; // Valor USD total del activo base (libre + hold)
+  quoteHoldingUsd?: number; // Valor USD total del activo de cotización (libre + hold)
+  slopeFraction?: number; // Intensidad normalizada de la tendencia (0–1)
 };
-
+// SimulationResult: resultado de simular una operación con un precio dado.
 type SimulationResult = {
-  status: "action" | "none" | "invalid";
-  message: string;
-  suggestedBaseAmount?: number;
-  suggestedFiatValue?: number;
-  action?: "buy" | "sell";
-  operation?: Operation;
+  status: "action" | "none" | "invalid"; // Resultado de la simulación: hay acción, no hay acción o entrada inválida
+  message: string; // Mensaje descriptivo del resultado (para UI)
+  suggestedBaseAmount?: number; // Cantidad base sugerida según la simulación (unidades del baseAsset)
+  suggestedFiatValue?: number; // Valor en moneda quote/fiat equivalente a mover
+  action?: "buy" | "sell"; // Dirección sugerida si aplica
+  operation?: Operation; // Operación completa generada por la simulación (cuando corresponde)
 };
-
+// PriceOverrideState: estado asociado a un override manual de precio para una operación.
 type PriceOverrideState = {
-  input: string;
-  result: SimulationResult | null;
-  visible: boolean;
+  input: string; // Texto ingresado por el usuario para sobreescribir precio (string crudo del input)
+  result: SimulationResult | null; // Resultado de simular con ese precio, si ya se calculó
+  visible: boolean; // Controla la visibilidad del modal/overlay de override de precio, si el modal esta visible muestra el
+  //formulario para ingresar el precio de simulacion.
 };
-
+// createEmptyRegisterForm: función auxiliar para inicializar el estado del formulario de registro. Los valores son strings 
+// para facilitar el enlace con inputs de texto. 
 type RegisterFormState = {
-  type: "long" | "short";
-  openPrice: string;
-  amount: string;
-  openValueFiat: string;
-  fiatCurrency: string;
-  openFee: string;
-  openFeeCurrency: string;
-  openDate: string;
+  type: "long" | "short"; // Tipo de posición a registrar manualmente
+  openPrice: string; // Precio de apertura ingresado como texto
+  amount: string; // Cantidad base abierta (texto)
+  openValueFiat: string; // Valor fiat de apertura (texto), es el monto en moneda quote.
+  fiatCurrency: string; // Moneda fiat/quote usada en el registro, es el symbolo del la moneda quote ej. USD, PEN
+  openFee: string; // Fee de apertura (texto)
+  openFeeCurrency: string; // Moneda del fee
+  openDate: string; // Fecha/hora de apertura en formato string
 };
-
+// transactionDoc: estructura del documento de transacción en la base de datos. solo maneja los datos de apertura de la
+// transacción. los datos de cierre se manejan por separado. se trae los datos directamente de la base de datos.
 type TransactionDoc = {
-  _id: string;
-  asset: string | { _id?: string };
-  type: "long" | "short";
-  amount: number;
-  openValueFiat: number;
-  openPrice: number;
-  openFee?: number;
-  status: "open" | "closed";
-  openDate?: string;
-  createdAt?: string;
+  _id: string; // ID del documento de transacción en la base de datos
+  asset: string | { _id?: string }; // Referencia al activo (puede venir como string o subdocumento)
+  type: "long" | "short"; // Dirección de la posición
+  amount: number; // Cantidad base abierta
+  openValueFiat: number; // Valor fiat invertido al abrir
+  openPrice: number; // Precio unitario al abrir
+  openFee?: number; // Comisión pagada al abrir (si existe)
+  status: "open" | "closed"; // Estado actual de la transacción
+  openDate?: string; // Fecha/hora de apertura (texto)
+  createdAt?: string; // Timestamp de creación del documento
 };
-
+// OpenPosition: estructura interna homogénea para representar posiciones abiertas. Sus datos vienen directamente de 
+// TransactionDoc.Se usa para calculos internos.
 type OpenPosition = {
-  id: string;
-  amount: number;
-  openValueFiat: number;
-  openPrice: number;
-  openFee: number;
-  openDate: number;
+  id: string; // ID de la transacción original
+  amount: number; // Cantidad base restante abierta
+  openValueFiat: number; // Valor fiat correspondiente a la parte abierta
+  openPrice: number; // Precio promedio de apertura
+  openFee: number; // Fee proporcional asociado a la porción abierta
+  openDate: number; // Fecha de apertura en milisegundos (epoch)
 };
 
 type OpenPositionsByAsset = {
-  longs: OpenPosition[];
-  shorts: OpenPosition[];
+  longs: OpenPosition[]; // Lista de posiciones largas abiertas para el activo
+  shorts: OpenPosition[]; // Lista de posiciones cortas abiertas para el activo
 };
 
+// Conversores y utilidades comunes -------------------------------------------
+
 const parseNumberInput = (value: string) => {
+  // Normaliza entrada numérica desde inputs (reemplaza coma por punto) y devuelve NaN si no es válido.
   if (typeof value !== "string") return NaN;
   const normalized = value.replace(/,/g, ".");
   const parsed = parseFloat(normalized);
   return Number.isFinite(parsed) ? parsed : NaN;
 };
 
-const isLikelyObjectId = (value: string) => /^[0-9a-fA-F]{24}$/.test(value);
+const isLikelyObjectId = (value: string) => /^[0-9a-fA-F]{24}$/.test(value); // Heurística simple para ObjectId de Mongo
 
 const BINANCE_EXCHANGE_IDS = new Set([
-  "68b36f95ea61fd89d70c8d98",
-  "binance",
+  "68b36f95ea61fd89d70c8d98", // ID interno que identifica Binance en tu BD
+  "binance", // Alias textual
 ]);
 
 const isBinanceExchangeValue = (value: unknown) => {
+  // Determina si un identificador de exchange corresponde a Binance.
   if (!value) return false;
   if (typeof value === "string") {
     const lower = value.toLowerCase();
@@ -179,21 +200,34 @@ const isBinanceExchangeValue = (value: unknown) => {
   return false;
 };
 
-const BASE_TOLERANCE = 1e-8;
-const PROFIT_TOLERANCE = 1e-6;
+const BASE_TOLERANCE = 1e-8; // Margen para cantidades base al comparar flotantes
+const PROFIT_TOLERANCE = 1e-6; // Margen para validar ganancias / cierres
 
 const toNumber = (value: unknown, fallback = 0) => {
+  // Convierte valores potencialmente nulos o strings a number, usando fallback si no es finito.
   const num = typeof value === "number" ? value : Number(value);
   return Number.isFinite(num) ? num : fallback;
 };
 
 const parseDate = (value?: string) => {
+  // Intenta convertir una fecha en milisegundos; devuelve NaN si no es parseable.
   if (!value) return Number.NaN;
   const time = Date.parse(value);
   return Number.isFinite(time) ? time : Number.NaN;
 };
 
+const formatDateTimeLabel = (value?: string) => {
+  // Devuelve una representación legible (fecha + hora) para mostrar en la UI.
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  const datePart = date.toLocaleDateString();
+  const timePart = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `${datePart} ${timePart}`;
+};
+
 const normalizeOpenPosition = (tx: TransactionDoc): OpenPosition | null => {
+  // Transforma un documento de transacción abierta a la estructura interna homogénea.
   const amount = toNumber(tx.amount);
   const openValueFiat = toNumber(tx.openValueFiat);
   const openPrice = toNumber(tx.openPrice);
@@ -210,6 +244,7 @@ const normalizeOpenPosition = (tx: TransactionDoc): OpenPosition | null => {
   };
 };
 
+// formatAssetAmount: da formato a cantidades base según el activo.
 const formatAssetAmount = (amount: number, asset: string) => {
   const upper = asset.toUpperCase();
   if (["USD", "PEN"].includes(upper)) {
@@ -224,6 +259,7 @@ const formatAssetAmount = (amount: number, asset: string) => {
   return amount.toFixed(4);
 };
 
+// formatQuoteValue: formatea montos en la moneda quote.
 const formatQuoteValue = (value: number, asset: string) => {
   const upper = asset?.toUpperCase?.() ?? "USD";
   if (upper === "USD") {
@@ -238,6 +274,11 @@ const formatQuoteValue = (value: number, asset: string) => {
   return `${value.toFixed(2)} ${upper}`;
 };
 
+// buildClosurePlan: selecciona posiciones abiertas para cerrar priorizando cercanía de openPrice al precio actual.
+// Reglas:
+// - Cierra primero la posición cuyo openPrice esté más cerca del precio de cierre actual y sea rentable.
+// - No propone cerrar (ni parcial ni total) posiciones que quedarían en pérdida, salvo un remanente mínimo.
+// - Si queda un remanente mínimo para completar la cantidad sugerida, permite cubrirlo con FIFO sobre posiciones en pérdida.
 const buildClosurePlan = (
   op: Operation,
   orders: OpenPosition[],
@@ -255,30 +296,42 @@ const buildClosurePlan = (
 
   let baseUsed = 0;
   let quoteUsed = 0;
-    const entries: Array<{ id: string; amount: number; closeValueFiat: number; closePrice: number }> = [];
-    const currentPrice = op.price;
-    const quoteUpper = op.quoteAsset?.toUpperCase?.() ?? op.quoteAsset;
-    const quoteDecimals = quoteUpper === "USDT" ? 8 : (quoteUpper === "USD" || quoteUpper === "PEN" ? 3 : 2);
+  const entries: Array<{ id: string; amount: number; closeValueFiat: number; closePrice: number }> = [];
+  const currentPrice = op.price;
+  const quoteUpper = op.quoteAsset?.toUpperCase?.() ?? op.quoteAsset;
+  const quoteDecimals = quoteUpper === "USDT" ? 8 : (quoteUpper === "USD" || quoteUpper === "PEN" ? 3 : 2);
+  const orderUsage = new Map<string, number>();
 
-  for (const order of orders) {
+  // 1) Ordenar por cercanía del openPrice al precio actual (más cercano primero)
+  const sorted = [...orders].sort((a, b) => {
+    const da = Math.abs(a.openPrice - currentPrice);
+    const db = Math.abs(b.openPrice - currentPrice);
+    return da - db;
+  });
+
+  // Helper para calcular si cerrar 'take' es rentable
+  const isProfitable = (order: OpenPosition, take: number) => {
+    const factor = take / order.amount;
+    const currentQuote = take * currentPrice;
+    const openGross = order.openValueFiat * factor;
+    const openFeePart = order.openFee * factor;
+    const profit = action === "sell"
+      ? currentQuote - (openGross + openFeePart)
+      : (openGross - openFeePart) - currentQuote;
+    return profit > PROFIT_TOLERANCE;
+  };
+
+  // 2) Consumir solo posiciones rentables, por cercanía
+  for (const order of sorted) {
     if (order.amount <= 0) continue;
     const remaining = availableBase - baseUsed;
     if (remaining <= BASE_TOLERANCE) break;
     const take = Math.min(order.amount, remaining);
     if (take <= BASE_TOLERANCE) continue;
 
-    const factor = take / order.amount;
+    if (!isProfitable(order, take)) continue; // no cerrar en pérdida
+
     const currentQuote = take * currentPrice;
-    const openGross = order.openValueFiat * factor;
-    const openFeePart = order.openFee * factor;
-
-    const profit =
-      action === "sell"
-        ? currentQuote - (openGross + openFeePart)
-        : (openGross - openFeePart) - currentQuote;
-
-    if (profit <= PROFIT_TOLERANCE) continue;
-
     baseUsed = Number((baseUsed + take).toFixed(8));
     quoteUsed = Number((quoteUsed + currentQuote).toFixed(quoteDecimals));
     entries.push({
@@ -287,6 +340,35 @@ const buildClosurePlan = (
       closeValueFiat: Number(currentQuote.toFixed(quoteDecimals)),
       closePrice: currentPrice,
     });
+    orderUsage.set(order.id, (orderUsage.get(order.id) ?? 0) + take);
+  }
+
+  // 3) Si queda un remanente mínimo, permitir cubrirlo con FIFO sobre las no rentables
+  let remainingAfterProfitable = availableBase - baseUsed;
+  if (remainingAfterProfitable > BASE_TOLERANCE) {
+    for (const order of orders) {
+      if (order.amount <= 0) continue;
+      remainingAfterProfitable = availableBase - baseUsed;
+      if (remainingAfterProfitable <= BASE_TOLERANCE) break;
+
+      const alreadyUsed = orderUsage.get(order.id) ?? 0;
+      const remainingCapacity = Math.max(order.amount - alreadyUsed, 0);
+      if (remainingCapacity <= BASE_TOLERANCE) continue;
+
+      const take = Math.min(remainingCapacity, remainingAfterProfitable);
+      if (take <= BASE_TOLERANCE) continue;
+
+      const currentQuote = take * currentPrice;
+      baseUsed = Number((baseUsed + take).toFixed(8));
+      quoteUsed = Number((quoteUsed + currentQuote).toFixed(quoteDecimals));
+      entries.push({
+        id: order.id,
+        amount: Number(take.toFixed(8)),
+        closeValueFiat: Number(currentQuote.toFixed(quoteDecimals)),
+        closePrice: currentPrice,
+      });
+      orderUsage.set(order.id, alreadyUsed + take);
+    }
   }
 
   if (!entries.length) return null;
@@ -298,6 +380,7 @@ const buildClosurePlan = (
   };
 };
 
+// adjustOperationForClosings: adapta la operación sugerida a cierres reales de posiciones abiertas.
 const adjustOperationForClosings = (
   op: Operation,
   openPositions?: OpenPositionsByAsset
@@ -447,23 +530,31 @@ const adjustOperationForClosings = (
   return op;
 };
 
+// === Componente principal ===================================================
+// Administra el ciclo de vida de la vista, llamadas a la API, cálculo de planes
+// y renderizado de sugerencias de trading.
 export default function TransaccionesScreen() {
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [operations, setOperations] = useState<Operation[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const hasFetchedOnFocus = useRef(false);
-  const isFetchingRef = useRef(false);
-  const [selectedOperation, setSelectedOperation] = useState<Operation | null>(null);
-  const [suggestionModalVisible, setSuggestionModalVisible] = useState(false);
-  const openPositionsByAssetRef = useRef<Map<string, OpenPositionsByAsset>>(new Map());
-  const [priceOverrides, setPriceOverrides] = useState<Record<string, PriceOverrideState>>({});
-  const [registerModalVisible, setRegisterModalVisible] = useState(false);
-  const [registerTarget, setRegisterTarget] = useState<Operation | null>(null);
-  const [registerForm, setRegisterForm] = useState<RegisterFormState>(() => createEmptyRegisterForm());
-  const [registerError, setRegisterError] = useState<string | null>(null);
-  const [registerSubmitting, setRegisterSubmitting] = useState(false);
+  // Estado general y referencias de control -------------------------------
+  const [loading, setLoading] = useState(true); // indicador de carga inicial
+  const [refreshing, setRefreshing] = useState(false); // refresco vía pull-to-refresh
+  const [operations, setOperations] = useState<Operation[]>([]); // lista de sugerencias calculadas
+  const [error, setError] = useState<string | null>(null); // error global en la vista
+  const hasFetchedOnFocus = useRef(false); // evita doble fetch al enfocar
+  const isFetchingRef = useRef(false); // evita llamadas paralelas a loadData
+  const [selectedOperation, setSelectedOperation] = useState<Operation | null>(null); // operación enfocada
+  const [suggestionModalVisible, setSuggestionModalVisible] = useState(false); // modal con detalle de sugerencia
+  const openPositionsByAssetRef = useRef<Map<string, OpenPositionsByAsset>>(new Map()); // snapshot de posiciones abiertas
+  const [priceOverrides, setPriceOverrides] = useState<Record<string, PriceOverrideState>>({}); // overrides manuales de precio
+  const [registerModalVisible, setRegisterModalVisible] = useState(false); // modal para registrar operación ejecutada
+  const [registerTarget, setRegisterTarget] = useState<Operation | null>(null); // operación objetivo al registrar
+  const [registerForm, setRegisterForm] = useState<RegisterFormState>(() => createEmptyRegisterForm()); // formulario de registro
+  const [registerError, setRegisterError] = useState<string | null>(null); // errores del formulario
+  const [registerSubmitting, setRegisterSubmitting] = useState(false); // flag de envío en progreso
+  const [datePickerVisible, setDatePickerVisible] = useState(false); // controla el modal del selector de fecha
+  const [datePickerValue, setDatePickerValue] = useState<Date>(() => new Date()); // valor temporal del selector
 
+  // loadData: rutina principal que agrupa llamadas a la API, normaliza la data y
+  // dispara el cálculo de asignaciones. Se puede invocar en silencio para refrescos.
   const loadData = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
       if (isFetchingRef.current) return;
@@ -474,6 +565,7 @@ export default function TransaccionesScreen() {
         }
         setError(null);
 
+      // Consultas concurrentes: assets, balances Binance, configuración, FX y transacciones.
       const [assetsRes, balancesRes, configRes, penRes, transactionsRes] = await Promise.all([
         api.get<AssetDocument[]>("/assets"),
         api.get<{ balances: BalanceEntry[]; totals: { usd: number; pen: number } }>(
@@ -484,12 +576,14 @@ export default function TransaccionesScreen() {
         api.get<TransactionDoc[]>("/transactions"),
       ]);
 
+      // Filtramos assets para separar los que son pares fiat útiles en la pantalla.
       const allAssets = assetsRes.data || [];
       const nonFiatAssets = allAssets.filter(asset => asset.type !== "fiat");
       const fiatPairs = allAssets.filter(asset => asset.symbol === "USDTUSD" || asset.symbol === "USDPEN");
       const assets = [...nonFiatAssets, ...fiatPairs];
 
 
+      // Normalización de balances de Binance y totales agregados.
       const balanceList = balancesRes.data?.balances ?? [];
       const totals = balancesRes.data?.totals ?? { usd: 0, pen: 0 };
       const balanceMap = new Map<string, BalanceEntry>();
@@ -497,6 +591,7 @@ export default function TransaccionesScreen() {
         balanceMap.set(entry.asset, entry);
       });
 
+      // Mapa de configuración key -> valor para buscar totales rápidamente.
       const configMap = new Map<string, number>();
       (configRes.data ?? []).forEach(item => {
         configMap.set(item.name, item.total);
@@ -535,6 +630,7 @@ export default function TransaccionesScreen() {
 
       const transactionsList = Array.isArray(transactionsRes.data) ? transactionsRes.data : [];
 
+      // Agrupamos transacciones abiertas por asset para evaluar cierres o aperturas.
       const openTransactionsByAsset = new Map<string, OpenPositionsByAsset>();
       transactionsList.forEach(tx => {
         if (!tx || tx.status !== "open") return;
@@ -564,6 +660,7 @@ export default function TransaccionesScreen() {
       // guardar para uso al guardar (FIFO en cierre real)
       openPositionsByAssetRef.current = openTransactionsByAsset;
 
+      // Traemos precios externos para assets que no son crypto (acciones, commodities, etc.).
       const nonCryptoAssets = allAssets.filter(asset => asset.type !== "crypto");
       const otherAssetPricesEntries = await Promise.all(
         nonCryptoAssets.map(async asset => {
@@ -583,6 +680,7 @@ export default function TransaccionesScreen() {
         }
       });
 
+      // Calculamos cuánto valen las posiciones estáticas registradas para esos assets.
       const externalHoldingsInfo = nonCryptoAssets.map(asset => {
         const amount = getInitialInvestmentAmount(asset.initialInvestment);
         const price = externalPriceMap.get(asset.symbol) ?? null;
@@ -597,20 +695,27 @@ export default function TransaccionesScreen() {
         }
       });
 
-      const externalUsdValue = externalHoldingsInfo.reduce((acc, info) => {
-        if (info.usdValue == null) return acc;
-        return acc + info.usdValue;
-      }, 0);
+      // Preparamos balances adicionales para alimentar calculateTotalBalances.
+      const externalBalanceEntries = externalHoldingsInfo
+        .filter(
+          info =>
+            typeof info.symbol === "string" &&
+            info.symbol !== "USD" &&
+            info.symbol !== "PEN" &&
+            info.usdValue != null &&
+            info.usdValue > 0
+        )
+        .map(info => ({
+          asset: info.symbol,
+          total: typeof info.amount === "number" ? info.amount : 0,
+          usdValue: info.usdValue as number,
+        }));
 
       const designatedTotal = nonFiatAssets.reduce(
         (acc, asset) => acc + (asset.totalCapitalWhenLastAdded ?? 0),
         0
       );
 
-      const cryptoUsd = balanceList.reduce(
-        (acc, entry) => acc + (entry.usdValue ?? 0),
-        0
-      );
       const configUsd = configMap.get("totalUSD") ?? 0;
       const penTotal = configMap.get("totalPen") ?? totals.pen ?? 0;
       const penUsdValue = penToUsd ? penTotal * penToUsd : 0;
@@ -618,32 +723,92 @@ export default function TransaccionesScreen() {
       const usdtBalanceEntry = balanceMap.get("USDT");
       const usdtUsdValue = usdtBalanceEntry?.usdValue ?? 0;
 
-      const portfolioTotal =
-        totalUsdFromBalances + cryptoUsd + penUsdValue + externalUsdValue;
+      // Balance consolidado de todo el portafolio (mismo cálculo que la pantalla de Balances).
+      const { totalUsd: portfolioTotal } = calculateTotalBalances({
+        balances: balanceList,
+        totals: { usd: totalUsdFromBalances, pen: penTotal },
+        penPrice: penToUsd > 0 ? penToUsd : null,
+        usdtSellPrice,
+        additionalBalances: externalBalanceEntries,
+      });
 
-
+      // Ajustamos en memoria el capital asignado por activo (totalCapitalWhenLastAdded) para reflejar
+      // excedentes o déficits globales antes de calcular allocations específicas.
       const difference = portfolioTotal - designatedTotal;
-      const adjustableCount = nonFiatAssets.length || 1;
-      let perAssetAdjustment = 0;
-      if (difference < 0) {
-        perAssetAdjustment = difference / adjustableCount;
-      } else if (difference > 200) {
-        perAssetAdjustment = (difference - 200) / adjustableCount;
+      const adjustedAllocationByAssetId = new Map<string, number>();
+      const ALLOCATION_EPSILON = 1e-6;
+      const POSITIVE_BUFFER = 200; // Evita reajustar por excedentes pequeños
+
+      if (nonFiatAssets.length > 0) {
+        const allocations = nonFiatAssets.map(asset => ({
+          asset,
+          allocation: Math.max(asset.totalCapitalWhenLastAdded ?? 0, 0),
+        }));
+
+        if (difference < -ALLOCATION_EPSILON) {
+          let deficit = Math.abs(difference);
+          let active = allocations.filter(item => item.allocation > ALLOCATION_EPSILON);
+
+          while (deficit > ALLOCATION_EPSILON && active.length) {
+            const share = deficit / active.length;
+            let consumed = 0;
+            const nextActive: typeof active = [];
+
+            for (const item of active) {
+              const reducible = Math.min(share, item.allocation);
+              if (reducible > ALLOCATION_EPSILON) {
+                item.allocation -= reducible;
+                deficit -= reducible;
+                consumed += reducible;
+              }
+              if (item.allocation > ALLOCATION_EPSILON) {
+                nextActive.push(item);
+              } else {
+                item.allocation = 0;
+              }
+            }
+
+            if (consumed <= ALLOCATION_EPSILON) {
+              break;
+            }
+
+            active = nextActive;
+          }
+        } else if (difference > POSITIVE_BUFFER) {
+          const surplus = difference - POSITIVE_BUFFER;
+          if (surplus > ALLOCATION_EPSILON) {
+            const share = surplus / allocations.length;
+            for (const item of allocations) {
+              item.allocation += share;
+            }
+          }
+        }
+
+        for (const { asset, allocation } of allocations) {
+          adjustedAllocationByAssetId.set(asset._id ?? asset.symbol, allocation);
+        }
       }
 
 
       const operationsResult: Operation[] = [];
 
+      // Iteramos cada asset (incluidos pares fiat) para construir la sugerencia adecuada.
       for (const asset of assets) {
-        let allocation = Math.max((asset.totalCapitalWhenLastAdded ?? 0) + perAssetAdjustment, 0);
+        const adjustedAllocation = adjustedAllocationByAssetId.get(asset._id ?? asset.symbol);
+        const baseAllocation =
+          adjustedAllocation != null
+            ? adjustedAllocation
+            : Math.max(asset.totalCapitalWhenLastAdded ?? 0, 0);
+        let allocation = Math.max(baseAllocation, 0);
 
         if (asset.symbol === "USDTUSD") {
           allocation = Math.max(totalUsdFromBalances + usdtUsdValue, 0);
         } else if (asset.symbol === "USDPEN") {
           allocation = Math.max(totalUsdFromBalances + penUsdValue, 0);
         }
-        if (allocation <= 0) continue;
+        if (allocation <= ALLOCATION_EPSILON) continue;
 
+        // Separar par base/quote para entender cantidades en juego.
         const { baseAsset, quoteAsset } = splitSymbol(asset.symbol);
         const isUsdtPair = asset.symbol === "USDTUSD";
 
@@ -672,6 +837,7 @@ export default function TransaccionesScreen() {
             usdToPen ?? 0
           );
         } else {
+          // Para stocks/commodities usamos la tabla de precios externos (Yahoo, etc.).
           fetchedPrice = externalPriceMap.get(asset.symbol) ?? null;
           if (!fetchedPrice) {
             fetchedPrice = await fetchExternalAssetPrice(
@@ -693,6 +859,7 @@ export default function TransaccionesScreen() {
         }
 
         const stockHoldingValue = externalValueMap.get(asset.symbol) ?? 0;
+        // Datos actuales de tenencia para el activo base y la contraparte quote.
         const baseHolding = getHoldingData(
           baseAsset,
           balanceMap,
@@ -709,6 +876,7 @@ export default function TransaccionesScreen() {
           lastPriceUsdtSell
         );
 
+        // Slope controla qué fracción del capital debe permanecer en base/quote.
         const slopeFraction = (asset.slope ?? 0) / 100;
         const baseHoldFraction = slopeFraction > 0 ? Math.min(slopeFraction, 1) : 0;
         const quoteHoldFraction = slopeFraction < 0 ? Math.min(Math.abs(slopeFraction), 1) : 0;
@@ -717,17 +885,20 @@ export default function TransaccionesScreen() {
         const quoteHoldUsd = allocation * quoteHoldFraction;
         const maxBaseAllowed = Math.max(allocation - quoteHoldUsd, 0);
 
+        // evaluateScenario calcula qué tan conveniente es comprar/vender dado un precio.
         const evaluateScenario = async (
-          mode: "buy" | "sell" | "neutral",
           scenarioPrice: number | null | undefined,
           {
             allowUpdates,
             priceLabel,
+            expectAction,
           }: {
             allowUpdates: boolean;
             priceLabel?: string;
+            expectAction?: "buy" | "sell";
           }
         ) => {
+          // Tomamos el precio del escenario (override) o el market actual.
           let price = scenarioPrice ?? fetchedPrice ?? null;
           if (!price || price <= 0) return;
 
@@ -761,9 +932,11 @@ export default function TransaccionesScreen() {
             }
           }
 
+          // Valor actual de la cartera en base/quote para comparar con objetivo heurístico.
           const actualBaseUsd = isUsdtPair ? baseHolding.amount * price : baseHolding.usdValue;
           const actualQuoteUsd = quoteHolding.usdValue;
 
+          // Normalizamos el precio en el rango histórico para calcular ponderaciones.
           const priceRange = maxPrice - minPrice;
           const normalized = priceRange === 0 ? 0.5 : clamp((price - minPrice) / priceRange, 0, 1);
           let baseShare = 1 - normalized;
@@ -809,13 +982,8 @@ export default function TransaccionesScreen() {
           const baseDiffUsd = targetBaseUsd - actualBaseUsd;
           const action: "buy" | "sell" = baseDiffUsd > 0 ? "buy" : "sell";
 
-          if (mode === "buy" && action !== "buy") {
-            return;
-          }
-
-          if (mode === "sell" && action !== "sell") {
-            return;
-          }
+          // Si se espera una acción específica (solo USDTUSD/P2P), descarta la contraria
+          if (expectAction && action !== expectAction) return;
 
           if (Math.abs(baseDiffUsd) <= BASE_TOLERANCE) {
             return;
@@ -864,10 +1032,9 @@ export default function TransaccionesScreen() {
           const slopeSign: 1 | 0 | -1 = slopeFraction > 0 ? 1 : slopeFraction < 0 ? -1 : 0;
 
           const operation: Operation = {
-            id: `${asset._id}-${mode}-${action}`,
+            id: `${asset._id}-${priceLabel ?? 'spot'}-${action}`,
             assetId: asset._id,
             symbol: asset.symbol,
-            mode,
             action,
             baseAsset,
             quoteAsset,
@@ -907,19 +1074,21 @@ export default function TransaccionesScreen() {
 
         if (isUsdtPair) {
           if (usdtBuyPrice != null) {
-            await evaluateScenario("buy", usdtBuyPrice, {
+            await evaluateScenario(usdtBuyPrice, {
               allowUpdates: true,
               priceLabel: "PrecioCompraUSDT",
+              expectAction: "buy",
             });
           }
           if (usdtSellPrice != null) {
-            await evaluateScenario("sell", usdtSellPrice, {
+            await evaluateScenario(usdtSellPrice, {
               allowUpdates: false,
               priceLabel: "PrecioVentaUSDT",
+              expectAction: "sell",
             });
           }
         } else {
-          await evaluateScenario("neutral", fetchedPrice, {
+          await evaluateScenario(fetchedPrice, {
             allowUpdates: true,
           });
         }
@@ -942,6 +1111,7 @@ export default function TransaccionesScreen() {
     []
   );
 
+  // simulateOperation: re-evalúa una sugerencia con un precio override y devuelve el resultado.
   const simulateOperation = useCallback(
     (op: Operation, overridePrice: number): SimulationResult => {
       if (!Number.isFinite(overridePrice) || overridePrice <= 0) {
@@ -1121,6 +1291,7 @@ export default function TransaccionesScreen() {
     []
   );
 
+  // Al enfocar la pantalla, forzamos un primer fetch.
   useFocusEffect(
     useCallback(() => {
       hasFetchedOnFocus.current = true;
@@ -1128,12 +1299,14 @@ export default function TransaccionesScreen() {
     }, [loadData])
   );
 
+  // También hacemos un fetch inicial si aún no ocurrió via focus.
   useEffect(() => {
     if (!hasFetchedOnFocus.current) {
       loadData();
     }
   }, [loadData]);
 
+  // Refresco automático cada 15s para mantener precios y sugerencias al día.
   useEffect(() => {
     const interval = setInterval(() => {
       loadData({ silent: true });
@@ -1142,11 +1315,13 @@ export default function TransaccionesScreen() {
     return () => clearInterval(interval);
   }, [loadData]);
 
+  // Handler para gesto pull-to-refresh en el ScrollView.
   const refreshHandler = useCallback(() => {
     setRefreshing(true);
     loadData({ silent: true });
   }, [loadData]);
 
+  // Limpiamos priceOverrides al cambiar la lista de operaciones activas.
   useEffect(() => {
     setPriceOverrides(prev => {
       const next: Record<string, PriceOverrideState> = {};
@@ -1171,6 +1346,7 @@ export default function TransaccionesScreen() {
     });
   }, [operations]);
 
+  // handleSimulatedPriceChange: actualiza overrides de precio y recalcula simulación.
   const handleSimulatedPriceChange = useCallback(
     (op: Operation, value: string) => {
       setPriceOverrides(prev => {
@@ -1199,6 +1375,7 @@ export default function TransaccionesScreen() {
     [simulateOperation]
   );
 
+  // togglePriceOverride: muestra/oculta el input manual de precio para una operación puntual.
   const togglePriceOverride = useCallback((opId: string) => {
     setPriceOverrides(prev => {
       const next = { ...prev };
@@ -1213,6 +1390,7 @@ export default function TransaccionesScreen() {
     });
   }, []);
 
+  // resolveOperationForAction: devuelve la operación resultante (override > sugerencia original).
   const resolveOperationForAction = useCallback(
     (operation: Operation): Operation => {
       const override = priceOverrides[operation.id];
@@ -1225,11 +1403,13 @@ export default function TransaccionesScreen() {
     [priceOverrides]
   );
 
+  // formatNumberForInput: helper para mostrar números en inputs sin notación científica.
   const formatNumberForInput = (value: number | null | undefined, precision = 6) => {
     if (typeof value !== "number" || !Number.isFinite(value)) return "";
     return value.toFixed(precision);
   };
 
+  // handleOperationPress: abre/cierra modal con detalle de la operación seleccionada.
   const handleOperationPress = useCallback(
     (operation: Operation) => {
       if (operation.action !== "sell" && operation.action !== "buy") return;
@@ -1240,6 +1420,7 @@ export default function TransaccionesScreen() {
     [resolveOperationForAction]
   );
 
+  // handleRegisterPress: prepara el formulario de registro con datos precargados.
   const handleRegisterPress = useCallback(
     (operation: Operation) => {
       const derived = resolveOperationForAction(operation);
@@ -1255,6 +1436,7 @@ export default function TransaccionesScreen() {
             : undefined),
         fiatCurrency === "USD" ? 2 : fiatCurrency === "USDT" ? 8 : 4
       );
+      const defaultOpenDate = new Date().toISOString();
 
       setRegisterTarget(derived);
       setRegisterForm({
@@ -1265,7 +1447,7 @@ export default function TransaccionesScreen() {
         fiatCurrency,
         openFee: "",
         openFeeCurrency: derived.isBinance ? "BNB" : "USD",
-        openDate: "",
+        openDate: defaultOpenDate,
       });
       setRegisterError(null);
       setRegisterModalVisible(true);
@@ -1273,13 +1455,64 @@ export default function TransaccionesScreen() {
     [resolveOperationForAction]
   );
 
+  const registerOpenDateLabel = useMemo(() => formatDateTimeLabel(registerForm.openDate), [registerForm.openDate]);
+
+  // Helper para cerrar el modal de registro y limpiar estado temporal.
   const closeRegisterModal = useCallback(() => {
     setRegisterModalVisible(false);
     setRegisterTarget(null);
     setRegisterForm(createEmptyRegisterForm());
     setRegisterError(null);
+    setDatePickerVisible(false);
   }, []);
 
+  const openRegisterDatePicker = useCallback(() => {
+    const parsed = registerForm.openDate ? new Date(registerForm.openDate) : new Date();
+    const timestamp = parsed.getTime();
+    const initial = Number.isFinite(timestamp) ? parsed : new Date();
+    setDatePickerValue(initial);
+    setDatePickerVisible(true);
+  }, [registerForm.openDate]);
+
+  const handleDatePickerIosChange = useCallback((_: DateTimePickerEvent, selectedDate?: Date) => {
+    if (selectedDate) {
+      setDatePickerValue(selectedDate);
+    }
+  }, []);
+
+  const handleDatePickerDateChange = useCallback((_: DateTimePickerEvent, selectedDate?: Date) => {
+    if (!selectedDate) return;
+    setDatePickerValue(prev => {
+      const next = new Date(prev);
+      next.setFullYear(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+      return next;
+    });
+  }, []);
+
+  const handleDatePickerTimeChange = useCallback((_: DateTimePickerEvent, selectedDate?: Date) => {
+    if (!selectedDate) return;
+    setDatePickerValue(prev => {
+      const next = new Date(prev);
+      next.setHours(
+        selectedDate.getHours(),
+        selectedDate.getMinutes(),
+        selectedDate.getSeconds(),
+        selectedDate.getMilliseconds()
+      );
+      return next;
+    });
+  }, []);
+
+  const handleDatePickerCancel = useCallback(() => {
+    setDatePickerVisible(false);
+  }, []);
+
+  const handleDatePickerConfirm = useCallback(() => {
+    setRegisterForm(prev => ({ ...prev, openDate: datePickerValue.toISOString() }));
+    setDatePickerVisible(false);
+  }, [datePickerValue]);
+
+  // handleRegisterFieldChange: sincroniza campos del formulario (conversión automática a mayúsculas para moneda).
   const handleRegisterFieldChange = useCallback(
     (field: keyof RegisterFormState, value: string) => {
       setRegisterForm(prev => ({ ...prev, [field]: value }));
@@ -1287,6 +1520,7 @@ export default function TransaccionesScreen() {
     []
   );
 
+  // recalculateRegisterFiat: recalcula el valor fiat a partir de precio * cantidad.
   const recalculateRegisterFiat = useCallback(() => {
     const price = parseNumberInput(registerForm.openPrice);
     const amount = parseNumberInput(registerForm.amount);
@@ -1299,6 +1533,7 @@ export default function TransaccionesScreen() {
     setRegisterError(null);
   }, [registerForm.amount, registerForm.openPrice]);
 
+  // handleRegisterSubmit: envía el formulario para registrar una operación ejecutada.
   const handleRegisterSubmit = useCallback(async () => {
     if (!registerTarget) return;
 
@@ -1372,11 +1607,13 @@ export default function TransaccionesScreen() {
     }
   }, [closeRegisterModal, loadData, registerForm, registerTarget]);
 
+  // Cierra el modal de sugerencias y resetea selección.
   const closeSuggestionModal = useCallback(() => {
     setSuggestionModalVisible(false);
     setSelectedOperation(null);
   }, []);
 
+  // content: renderizado condicional memoizado para spinner, errores o tarjetas.
   const content = useMemo(() => {
     if (loading && !refreshing) {
       return (
@@ -1518,6 +1755,7 @@ export default function TransaccionesScreen() {
       <Text style={styles.title}>📊 Transacciones sugeridas</Text>
       {content}
 
+      {/* Modal con el detalle textual de la sugerencia seleccionada */}
       <Modal
         visible={suggestionModalVisible}
         transparent
@@ -1556,6 +1794,55 @@ export default function TransaccionesScreen() {
         </View>
       </Modal>
 
+      <Modal visible={datePickerVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.datePickerModalCard}>
+            <Text style={styles.modalTitle}>Seleccionar fecha de apertura</Text>
+            {Platform.OS === "ios" ? (
+              <DateTimePicker
+                value={datePickerValue}
+                mode="datetime"
+                display="inline"
+                onChange={handleDatePickerIosChange}
+              />
+            ) : (
+              <>
+                <DateTimePicker
+                  value={datePickerValue}
+                  mode="date"
+                  display="calendar"
+                  onChange={handleDatePickerDateChange}
+                />
+                <View style={styles.datePickerDivider} />
+                <DateTimePicker
+                  value={datePickerValue}
+                  mode="time"
+                  display="spinner"
+                  onChange={handleDatePickerTimeChange}
+                />
+              </>
+            )}
+            <View style={styles.datePickerButtonsRow}>
+              <TouchableOpacity
+                onPress={handleDatePickerCancel}
+                style={[styles.datePickerButton, styles.datePickerButtonSecondary]}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.datePickerButtonText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleDatePickerConfirm}
+                style={styles.datePickerButton}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.datePickerButtonText}>Guardar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal para registrar manualmente la ejecución de una sugerencia */}
       <Modal
         visible={registerModalVisible}
         transparent
@@ -1686,13 +1973,20 @@ export default function TransaccionesScreen() {
                   })}
                 </View>
 
-                <Text style={styles.modalLabel}>Fecha de apertura (opcional)</Text>
-                <TextInput
-                  style={styles.customInput}
-                  value={registerForm.openDate}
-                  onChangeText={value => handleRegisterFieldChange("openDate", value)}
-                  placeholder="Ej. 2024-05-30T14:30:00"
-                />
+                <Text style={styles.modalLabel}>Fecha de apertura</Text>
+                <TouchableOpacity
+                  style={styles.datePickerTrigger}
+                  onPress={openRegisterDatePicker}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={
+                      registerForm.openDate ? styles.datePickerText : styles.datePickerPlaceholder
+                    }
+                  >
+                    {registerForm.openDate ? registerOpenDateLabel : "Seleccionar fecha"}
+                  </Text>
+                </TouchableOpacity>
 
                 <TouchableOpacity
                   style={[
@@ -1731,6 +2025,7 @@ export default function TransaccionesScreen() {
   );
 }
 
+// splitSymbol: separa un ticker compuesto en base y quote (maneja algunos quotes conocidos).
 function splitSymbol(symbol: string): { baseAsset: string; quoteAsset: string } {
   const knownQuotes = ["USDT", "USDC", "BUSD", "BTC", "ETH", "USD", "PEN"];
   for (const quote of knownQuotes) {
@@ -1744,6 +2039,7 @@ function splitSymbol(symbol: string): { baseAsset: string; quoteAsset: string } 
   return { baseAsset: symbol, quoteAsset: "USD" };
 }
 
+// fetchAssetPrice: obtiene precios spot desde Binance o calcula conversiones básicas fiat.
 async function fetchAssetPrice(
   symbol: string,
   lastPriceUsdtSell: number,
@@ -1769,6 +2065,7 @@ async function fetchAssetPrice(
   }
 }
 
+// fetchExternalAssetPrice: precios para activos no-crypto (acciones, commodities, fiat).
 async function fetchExternalAssetPrice(
   symbol: string,
   type: string,
@@ -1804,6 +2101,7 @@ async function fetchExternalAssetPrice(
   return null;
 }
 
+// fetchStockRegularPrice: consulta Yahoo Finance para obtener el precio regular de una acción.
 async function fetchStockRegularPrice(symbol: string): Promise<number | null> {
   try {
     const res = await fetch(
@@ -1819,6 +2117,7 @@ async function fetchStockRegularPrice(symbol: string): Promise<number | null> {
   }
 }
 
+// fetchCommodityPrice: intenta Yahoo Finance y luego Binance para commodities.
 async function fetchCommodityPrice(symbol: string): Promise<number | null> {
   try {
     // Intenta Yahoo Finance primero
@@ -1848,6 +2147,7 @@ async function fetchCommodityPrice(symbol: string): Promise<number | null> {
   }
 }
 
+// getInitialInvestmentAmount: extrae montos iniciales registrados en USD.
 function getInitialInvestmentAmount(initialInvestment?: number | Record<string, number>): number | null {
   if (typeof initialInvestment === "number") return initialInvestment;
   if (!initialInvestment) return null;
@@ -1863,6 +2163,7 @@ function getInitialInvestmentAmount(initialInvestment?: number | Record<string, 
   return null;
 }
 
+// getHoldingData: recupera la tenencia actual (cantidad + equivalencia USD) según el asset.
 function getHoldingData(
   asset: string,
   balanceMap: Map<string, BalanceEntry>,
@@ -1899,10 +2200,12 @@ function getHoldingData(
   return { amount: 0, usdValue: 0 };
 }
 
+// clamp: limita un valor al rango [min, max].
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
+// createEmptyRegisterForm: plantilla limpia (inicializa con fecha actual) para el formulario de registro.
 const createEmptyRegisterForm = (): RegisterFormState => ({
   type: "long",
   openPrice: "",
@@ -1911,9 +2214,10 @@ const createEmptyRegisterForm = (): RegisterFormState => ({
   fiatCurrency: "",
   openFee: "",
   openFeeCurrency: "USDT",
-  openDate: "",
+  openDate: new Date().toISOString(),
 });
 
+// Estilos visuales de la pantalla.
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -2008,6 +2312,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#333",
   },
+  datePickerTrigger: {
+    borderWidth: 1,
+    borderColor: "#d0d0d0",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  datePickerText: {
+    fontSize: 16,
+    color: "#333",
+  },
+  datePickerPlaceholder: {
+    fontSize: 16,
+    color: "#888",
+  },
   customResult: {
     fontSize: 14,
     color: "#333",
@@ -2055,6 +2374,35 @@ const styles = StyleSheet.create({
     padding: 20,
     backgroundColor: "#fff",
     gap: 12,
+  },
+  datePickerModalCard: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    gap: 12,
+  },
+  datePickerDivider: {
+    height: 8,
+  },
+  datePickerButtonsRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+  },
+  datePickerButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: "#1976d2",
+    marginLeft: 8,
+  },
+  datePickerButtonSecondary: {
+    backgroundColor: "#546e7a",
+  },
+  datePickerButtonText: {
+    color: "#fff",
+    fontWeight: "600",
   },
   modalTitle: {
     fontSize: 20,

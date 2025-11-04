@@ -5,6 +5,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import api from "../constants/api";
 import { CONFIG_INFO_INITIAL_ID } from "../constants/config";
 import { computeXIRR } from "../utils/xirrmanual"; // tu función XIRR
+import { calculateTotalBalances } from "../utils/calculateTotalBalances";
 
 type CashFlow = { amount: number; when: Date };
 type Balance = { asset: string; total: number; usdValue: number };
@@ -511,29 +512,18 @@ export default function PrediccionScreen() {
     });
   }, [stockHoldings, vooPrice, pricesTick]);
 
-  // Construir extendedBalances igual que en Balances
-  const extendedBalances: Balance[] = useMemo(() => {
-    return [
-      ...balances.map(b => {
-        if (b.asset === "USDT") {
-          const price = usdtSellPrice ?? 1;
-          return { ...b, usdValue: b.total * price };
-        }
-        const livePrice = pricesRef.current[b.asset];
-        if (typeof livePrice === "number" && Number.isFinite(livePrice) && b.total > 0) {
-          return { ...b, usdValue: b.total * livePrice };
-        }
-        return b;
+  const { totalUsd: totalUsdCalculated } = useMemo(
+    () =>
+      calculateTotalBalances({
+        balances,
+        totals,
+        penPrice,
+        usdtSellPrice,
+        livePrices: pricesRef.current,
+        additionalBalances: stockBalances,
       }),
-      ...stockBalances,
-      { asset: "USD", total: totals.usd, usdValue: totals.usd },
-      { asset: "PEN", total: totals.pen, usdValue: penPrice ? totals.pen * penPrice : 0 },
-    ].filter((b) => b.usdValue > 0);
-  }, [balances, stockBalances, totals, penPrice, usdtSellPrice, pricesTick]);
-
-  const totalUsdCalculated = useMemo(() => {
-    return extendedBalances.reduce((acc, b) => acc + (b.asset === "PEN" && !penPrice ? 0 : b.usdValue), 0);
-  }, [extendedBalances, penPrice]);
+    [balances, stockBalances, totals, penPrice, usdtSellPrice, pricesTick]
+  );
 
   // Mantener totalUsd en sync con el cálculo de Balances
   useEffect(() => {

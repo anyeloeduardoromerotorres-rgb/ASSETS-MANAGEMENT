@@ -1,5 +1,5 @@
 // app/balances.tsx
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import api from "../constants/api";
+import { calculateTotalBalances } from "../utils/calculateTotalBalances";
 
 type Balance = {
   asset: string;
@@ -303,38 +304,24 @@ export default function BalancesScreen() {
     };
   });
 
+  const { extendedBalances, totalUsd } = useMemo(
+    () =>
+      calculateTotalBalances({
+        balances,
+        totals,
+        penPrice,
+        usdtSellPrice,
+        livePrices: pricesRef.current,
+        additionalBalances: stockBalances,
+      }),
+    [balances, stockBalances, totals, penPrice, usdtSellPrice, pricesTick]
+  );
+
   // Arrancar (o reiniciar) stream de precios cuando cambie la lista de assets
   useEffect(() => {
     const assets = balances.map(b => b.asset);
     startPriceStream(assets);
   }, [balances, startPriceStream]);
-
-  const extendedBalances: Balance[] = [
-    // Aplicar precios en tiempo real cuando existan
-    ...balances.map(b => {
-      if (b.asset === "USDT") {
-        const price = usdtSellPrice ?? 1;
-        return { ...b, usdValue: b.total * price };
-      }
-      const livePrice = pricesRef.current[b.asset];
-      if (typeof livePrice === "number" && Number.isFinite(livePrice) && b.total > 0) {
-        return { ...b, usdValue: b.total * livePrice };
-      }
-      return b;
-    }),
-    ...stockBalances,
-    { asset: "USD", total: totals.usd, usdValue: totals.usd },
-    {
-      asset: "PEN",
-      total: totals.pen,
-      usdValue: penPrice ? totals.pen * penPrice : 0,
-    },
-  ].filter((b) => b.usdValue > 0);
-
-  const totalUsd = extendedBalances.reduce(
-    (acc, b) => acc + (b.asset === "PEN" && !penPrice ? 0 : b.usdValue),
-    0
-  );
 
   return (
     <View style={styles.container}>

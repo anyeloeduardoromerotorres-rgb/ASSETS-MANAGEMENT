@@ -14,6 +14,7 @@ import {
   Modal,
 } from "react-native";
 import api from "../constants/api";
+import { calculateTotalBalances } from "../utils/calculateTotalBalances";
 
 interface ConfigDoc {
   _id: string;
@@ -138,6 +139,7 @@ export default function Index() {
   const [stockInputs, setStockInputs] = useState<Record<string, string>>({});
   const [stockSavingMap, setStockSavingMap] = useState<Record<string, boolean>>({});
   const [stockErrorMap, setStockErrorMap] = useState<Record<string, string | null>>({});
+  const [stockPrices, setStockPrices] = useState<Record<string, number>>({});
 
   const [savingUsd, setSavingUsd] = useState(false);
   const [savingPen, setSavingPen] = useState(false);
@@ -335,6 +337,40 @@ export default function Index() {
     setStockSavingMap({});
   }, [stockAssets]);
 
+  const fetchStockPrice = useCallback(async (symbol: string) => {
+    const normalized = symbol?.toUpperCase?.();
+    if (!normalized || normalized === "VOO") return;
+    try {
+      const res = await fetch(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(normalized)}?interval=1d&range=1d`
+      );
+      const data = await res.json();
+      const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      if (typeof price === "number" && price > 0) {
+        setStockPrices(prev => {
+          if (prev[normalized] === price) return prev;
+          return { ...prev, [normalized]: price };
+        });
+      }
+    } catch (err) {
+      console.error(`❌ Error obteniendo precio de ${normalized}:`, err);
+    }
+  }, []);
+
+  useEffect(() => {
+    const symbols = Array.from(
+      new Set(
+        stockAssets
+          .map(asset => asset.symbol?.toUpperCase())
+          .filter((symbol): symbol is string => Boolean(symbol))
+      )
+    );
+    symbols.forEach(sym => {
+      if (sym === "VOO") return;
+      fetchStockPrice(sym);
+    });
+  }, [stockAssets, fetchStockPrice]);
+
   const stockHoldings = useMemo(() => {
     return stockAssets.map(asset => ({
       symbol: asset.symbol?.toUpperCase() ?? "",
@@ -345,14 +381,15 @@ export default function Index() {
   const stockBalances = useMemo(() => {
     return stockAssets.map(asset => {
       const symbol = asset.symbol?.toUpperCase() ?? "";
-      const inputValue = stockInputs[asset._id] ?? "";
-      const parsed = parseInput(inputValue);
-      const fallbackAmount = getInitialInvestmentAmount(asset.initialInvestment) ?? 0;
-      const amount = Number.isNaN(parsed) ? fallbackAmount : parsed;
+      const amount = getInitialInvestmentAmount(asset.initialInvestment) ?? 0;
       const isVoo = symbol === "VOO";
-      const usdValue = isVoo && typeof vooMarketPrice === "number" && vooMarketPrice > 0
-        ? amount * vooMarketPrice
-        : amount;
+      const knownPrice = !isVoo ? stockPrices[symbol] : undefined;
+      const usdValue =
+        isVoo && typeof vooMarketPrice === "number" && vooMarketPrice > 0
+          ? amount * vooMarketPrice
+          : typeof knownPrice === "number" && Number.isFinite(knownPrice) && knownPrice > 0
+          ? amount * knownPrice
+          : amount;
       return {
         id: asset._id,
         asset: symbol,
@@ -360,7 +397,7 @@ export default function Index() {
         usdValue,
       };
     });
-  }, [stockAssets, stockInputs, vooMarketPrice]);
+  }, [stockAssets, vooMarketPrice, stockPrices]);
 
   const usdtSellPrice = useMemo(() => {
     const raw = Number(usdtSellConfig?.total);
@@ -382,36 +419,24 @@ export default function Index() {
   const usdTotalFromApi = binanceTotals?.usd ?? 0;
   const penTotalFromApi = binanceTotals?.pen ?? 0;
 
-  const extendedBalances = useMemo(() => {
-    const list: { asset: string; total: number; usdValue: number }[] = [];
-    adjustedBinanceBalances.forEach(balance => {
-      list.push({
-        asset: balance.asset,
-        total: balance.total,
-        usdValue: balance.usdValue,
-      });
-    });
-
-    stockBalances.forEach(balance => {
-      if (balance.usdValue > 0) {
-        list.push({ asset: balance.asset, total: balance.total, usdValue: balance.usdValue });
-      }
-    });
-
-    if (usdTotalFromApi > 0) {
-      list.push({ asset: "USD", total: usdTotalFromApi, usdValue: usdTotalFromApi });
-    }
-    if (penTotalFromApi > 0) {
-      const usdEquivalent = penUsdRate ? penTotalFromApi * penUsdRate : 0;
-      list.push({ asset: "PEN", total: penTotalFromApi, usdValue: usdEquivalent });
-    }
-
-    return list.filter(item => item.usdValue > 0);
-  }, [adjustedBinanceBalances, stockBalances, usdTotalFromApi, penTotalFromApi, penUsdRate]);
-
-  const totalBalance = useMemo(() => {
-    return extendedBalances.reduce((acc, item) => acc + item.usdValue, 0);
-  }, [extendedBalances]);
+  const { extendedBalances, totalUsd: totalBalance } = useMemo(
+    () =>
+      calculateTotalBalances({
+        balances: adjustedBinanceBalances,
+        totals: { usd: usdTotalFromApi, pen: penTotalFromApi },
+        penPrice: penUsdRate,
+        usdtSellPrice,
+        additionalBalances: stockBalances,
+      }),
+    [
+      adjustedBinanceBalances,
+      stockBalances,
+      usdTotalFromApi,
+      penTotalFromApi,
+      penUsdRate,
+      usdtSellPrice,
+    ]
+  );
 
   const nonFiatAssetsCount = useMemo(() => deletableAssets.length, [deletableAssets]);
 
