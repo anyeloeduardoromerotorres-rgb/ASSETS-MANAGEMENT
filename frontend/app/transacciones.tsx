@@ -552,6 +552,9 @@ export default function TransaccionesScreen() {
   const [registerSubmitting, setRegisterSubmitting] = useState(false); // flag de envío en progreso
   const [datePickerVisible, setDatePickerVisible] = useState(false); // controla el modal del selector de fecha
   const [datePickerValue, setDatePickerValue] = useState<Date>(() => new Date()); // valor temporal del selector
+  const [assetOptions, setAssetOptions] = useState<AssetDocument[]>([]); // catálogo de pares disponibles
+  const [addTransactionModalVisible, setAddTransactionModalVisible] = useState(false); // modal para agregar manualmente
+  const [manualSelectedAssetId, setManualSelectedAssetId] = useState<string | null>(null); // par elegido en el modal
 
   // loadData: rutina principal que agrupa llamadas a la API, normaliza la data y
   // dispara el cálculo de asignaciones. Se puede invocar en silencio para refrescos.
@@ -565,31 +568,31 @@ export default function TransaccionesScreen() {
         }
         setError(null);
 
-      // Consultas concurrentes: assets, balances Binance, configuración, FX y transacciones.
-      const [assetsRes, balancesRes, configRes, penRes, transactionsRes] = await Promise.all([
-        api.get<AssetDocument[]>("/assets"),
-        api.get<{ balances: BalanceEntry[]; totals: { usd: number; pen: number } }>(
-          "/binance/balances"
-        ),
-        api.get<ConfigInfo[]>("/config-info"),
-        fetch("https://open.er-api.com/v6/latest/PEN").then(res => res.json()),
-        api.get<TransactionDoc[]>("/transactions"),
-      ]);
+        // Consultas concurrentes: assets, balances Binance, configuración, FX y transacciones.
+        const [assetsRes, balancesRes, configRes, penRes, transactionsRes] = await Promise.all([
+          api.get<AssetDocument[]>("/assets"),
+          api.get<{ balances: BalanceEntry[]; totals: { usd: number; pen: number } }>(
+            "/binance/balances"
+          ),
+          api.get<ConfigInfo[]>("/config-info"),
+          fetch("https://open.er-api.com/v6/latest/PEN").then(res => res.json()),
+          api.get<TransactionDoc[]>("/transactions"),
+        ]);
 
-      // Filtramos assets para separar los que son pares fiat útiles en la pantalla.
-      const allAssets = assetsRes.data || [];
-      const nonFiatAssets = allAssets.filter(asset => asset.type !== "fiat");
-      const fiatPairs = allAssets.filter(asset => asset.symbol === "USDTUSD" || asset.symbol === "USDPEN");
-      const assets = [...nonFiatAssets, ...fiatPairs];
+        // Filtramos assets para separar los que son pares fiat útiles en la pantalla.
+        const allAssets = assetsRes.data || [];
+        const nonFiatAssets = allAssets.filter(asset => asset.type !== "fiat");
+        const fiatPairs = allAssets.filter(asset => asset.symbol === "USDTUSD" || asset.symbol === "USDPEN");
+        const assets = [...nonFiatAssets, ...fiatPairs];
+        setAssetOptions(assets);
 
-
-      // Normalización de balances de Binance y totales agregados.
-      const balanceList = balancesRes.data?.balances ?? [];
-      const totals = balancesRes.data?.totals ?? { usd: 0, pen: 0 };
-      const balanceMap = new Map<string, BalanceEntry>();
-      balanceList.forEach(entry => {
-        balanceMap.set(entry.asset, entry);
-      });
+        // Normalización de balances de Binance y totales agregados.
+        const balanceList = balancesRes.data?.balances ?? [];
+        const totals = balancesRes.data?.totals ?? { usd: 0, pen: 0 };
+        const balanceMap = new Map<string, BalanceEntry>();
+        balanceList.forEach(entry => {
+          balanceMap.set(entry.asset, entry);
+        });
 
       // Mapa de configuración key -> valor para buscar totales rápidamente.
       const configMap = new Map<string, number>();
@@ -1613,6 +1616,98 @@ export default function TransaccionesScreen() {
     setSelectedOperation(null);
   }, []);
 
+  const sortedAssetOptions = useMemo(
+    () => [...assetOptions].sort((a, b) => a.symbol.localeCompare(b.symbol)),
+    [assetOptions]
+  );
+
+  const openAddTransactionModal = useCallback(() => {
+    if (sortedAssetOptions.length === 0) {
+      Alert.alert("Sin pares disponibles", "No hay pares configurados para registrar transacciones.");
+      return;
+    }
+    setManualSelectedAssetId(sortedAssetOptions[0]._id ?? null);
+    setAddTransactionModalVisible(true);
+  }, [sortedAssetOptions]);
+
+  const closeAddTransactionModal = useCallback(() => {
+    setAddTransactionModalVisible(false);
+  }, []);
+
+  const handleManualPairSelect = useCallback((assetId: string) => {
+    setManualSelectedAssetId(assetId);
+  }, []);
+
+  const handleManualPairConfirm = useCallback(() => {
+    if (!manualSelectedAssetId) {
+      Alert.alert("Selecciona un par", "Debes elegir el par de la transacción antes de continuar.");
+      return;
+    }
+
+    const asset = sortedAssetOptions.find(item => item._id === manualSelectedAssetId);
+    if (!asset) {
+      Alert.alert("Par no disponible", "No se encontró el par seleccionado. Intenta nuevamente.");
+      return;
+    }
+
+    const { baseAsset, quoteAsset } = splitSymbol(asset.symbol);
+    const normalizedQuote = quoteAsset.toUpperCase();
+    const exchangeValue = asset.exchange ?? asset.exchangeName ?? null;
+    const exchangeId =
+      typeof asset.exchange === "string"
+        ? asset.exchange
+        : asset.exchange && typeof asset.exchange === "object"
+        ? asset.exchange._id ?? asset.exchange.id ?? null
+        : null;
+    const exchangeName =
+      typeof asset.exchange === "object"
+        ? asset.exchange.name ?? null
+        : typeof asset.exchangeName === "string"
+        ? asset.exchangeName
+        : null;
+    const binance = isBinanceExchangeValue(exchangeValue);
+
+    const manualOperation: Operation = {
+      id: `manual-${asset._id}`,
+      assetId: asset._id,
+      symbol: asset.symbol,
+      baseAsset,
+      quoteAsset: normalizedQuote,
+      fiatCurrency: normalizedQuote,
+      exchangeId,
+      exchangeName,
+      isBinance: binance,
+      usdtUsdRate: 1,
+      allocation: 0,
+      price: 0,
+      action: "buy",
+      suggestedBaseAmount: 0,
+      suggestedFiatValue: 0,
+      targetBaseUsd: 0,
+      targetQuoteUsd: 0,
+      targetBasePercent: 0,
+      actualBaseUsd: 0,
+      actualQuoteUsd: 0,
+      baseDiffUsd: 0,
+      actionMessage: "Registro manual",
+    };
+
+    setRegisterTarget(manualOperation);
+    setRegisterForm({
+      type: "long",
+      openPrice: "",
+      amount: "",
+      openValueFiat: "",
+      fiatCurrency: normalizedQuote,
+      openFee: "",
+      openFeeCurrency: binance ? "BNB" : "USD",
+      openDate: new Date().toISOString(),
+    });
+    setRegisterError(null);
+    setAddTransactionModalVisible(false);
+    setRegisterModalVisible(true);
+  }, [manualSelectedAssetId, sortedAssetOptions]);
+
   // content: renderizado condicional memoizado para spinner, errores o tarjetas.
   const content = useMemo(() => {
     if (loading && !refreshing) {
@@ -1752,8 +1847,85 @@ export default function TransaccionesScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>📊 Transacciones sugeridas</Text>
+      <View style={styles.headerRow}>
+        <Text style={styles.title}>📊 Transacciones sugeridas</Text>
+        <TouchableOpacity
+          style={[styles.addButton, assetOptions.length === 0 && styles.addButtonDisabled]}
+          onPress={openAddTransactionModal}
+          activeOpacity={0.8}
+          disabled={assetOptions.length === 0}
+        >
+          <Text style={styles.addButtonText}>+</Text>
+        </TouchableOpacity>
+      </View>
       {content}
+
+      <Modal
+        visible={addTransactionModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={closeAddTransactionModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Agregar transacción</Text>
+            <Text style={styles.modalLabel}>Selecciona el par</Text>
+            <ScrollView
+              style={styles.pairList}
+              contentContainerStyle={styles.pairListContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {sortedAssetOptions.length > 0 ? (
+                sortedAssetOptions.map(asset => {
+                  const selected = manualSelectedAssetId === asset._id;
+                  const exchangeName =
+                    typeof asset.exchange === "object"
+                      ? asset.exchange?.name ?? null
+                      : typeof asset.exchangeName === "string"
+                      ? asset.exchangeName
+                      : null;
+                  const { baseAsset: base, quoteAsset: quote } = splitSymbol(asset.symbol);
+                  return (
+                    <TouchableOpacity
+                      key={asset._id}
+                      style={[styles.pairOption, selected && styles.pairOptionActive]}
+                      onPress={() => handleManualPairSelect(asset._id)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.pairOptionText}>{asset.symbol}</Text>
+                      <Text style={styles.pairOptionMeta}>
+                        Base: {base} | Quote: {quote}
+                      </Text>
+                      {exchangeName ? <Text style={styles.pairOptionSubtext}>{exchangeName}</Text> : null}
+                    </TouchableOpacity>
+                  );
+                })
+              ) : (
+                <Text style={styles.empty}>No hay pares disponibles.</Text>
+              )}
+            </ScrollView>
+            <TouchableOpacity
+              style={[
+                styles.cardButton,
+                styles.cardButtonSecondary,
+                !manualSelectedAssetId && styles.cardButtonDisabled,
+              ]}
+              onPress={handleManualPairConfirm}
+              activeOpacity={0.8}
+              disabled={!manualSelectedAssetId}
+            >
+              <Text style={styles.cardButtonText}>Continuar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.cardButton, styles.cardButtonGhost]}
+              onPress={closeAddTransactionModal}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.cardButtonText}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Modal con el detalle textual de la sugerencia seleccionada */}
       <Modal
@@ -2227,7 +2399,30 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: "bold",
+    marginBottom: 0,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     marginBottom: 12,
+  },
+  addButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#1976d2",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addButtonDisabled: {
+    opacity: 0.5,
+  },
+  addButtonText: {
+    color: "#fff",
+    fontSize: 26,
+    fontWeight: "bold",
+    lineHeight: 28,
   },
   centered: {
     flex: 1,
@@ -2374,6 +2569,38 @@ const styles = StyleSheet.create({
     padding: 20,
     backgroundColor: "#fff",
     gap: 12,
+  },
+  pairList: {
+    maxHeight: 260,
+  },
+  pairListContent: {
+    gap: 8,
+  },
+  pairOption: {
+    borderWidth: 1,
+    borderColor: "#cfd8dc",
+    borderRadius: 10,
+    padding: 12,
+    backgroundColor: "#f5f5f5",
+  },
+  pairOptionActive: {
+    borderColor: "#1976d2",
+    backgroundColor: "#e3f2fd",
+  },
+  pairOptionText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#212121",
+  },
+  pairOptionMeta: {
+    fontSize: 13,
+    color: "#546e7a",
+    marginTop: 4,
+  },
+  pairOptionSubtext: {
+    fontSize: 12,
+    color: "#78909c",
+    marginTop: 2,
   },
   datePickerModalCard: {
     width: "100%",
