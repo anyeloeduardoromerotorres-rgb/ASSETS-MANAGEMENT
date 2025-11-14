@@ -1459,6 +1459,13 @@ export default function TransaccionesScreen() {
   );
 
   const registerOpenDateLabel = useMemo(() => formatDateTimeLabel(registerForm.openDate), [registerForm.openDate]);
+  const feeCurrencyOptions = useMemo(() => {
+    const baseAssetOption = registerTarget?.baseAsset?.toUpperCase?.();
+    if (baseAssetOption && !DEFAULT_FEE_CURRENCIES.includes(baseAssetOption)) {
+      return [...DEFAULT_FEE_CURRENCIES, baseAssetOption];
+    }
+    return DEFAULT_FEE_CURRENCIES;
+  }, [registerTarget?.baseAsset]);
 
   // Helper para cerrar el modal de registro y limpiar estado temporal.
   const closeRegisterModal = useCallback(() => {
@@ -2126,7 +2133,7 @@ export default function TransaccionesScreen() {
 
                 <Text style={styles.modalLabel}>Moneda del fee</Text>
                 <View style={styles.modalTypeRow}>
-                  {["BNB", "USDT", "USD"].map(currency => {
+                  {feeCurrencyOptions.map(currency => {
                     const isActive = registerForm.openFeeCurrency === currency;
                     return (
                       <TouchableOpacity
@@ -2376,6 +2383,8 @@ function getHoldingData(
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
+
+const DEFAULT_FEE_CURRENCIES = ["BNB", "USDT", "USD"];
 
 // createEmptyRegisterForm: plantilla limpia (inicializa con fecha actual) para el formulario de registro.
 const createEmptyRegisterForm = (): RegisterFormState => ({
