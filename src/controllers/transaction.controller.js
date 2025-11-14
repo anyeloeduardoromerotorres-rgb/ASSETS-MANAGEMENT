@@ -78,16 +78,47 @@ async function getUsdtUsdRate() {
   return 1;
 }
 
-async function getBnbUsdtPrice() {
+async function getBinanceTickerPrice(symbol) {
   try {
-    const response = await axios.get("https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT");
+    const response = await axios.get("https://api.binance.com/api/v3/ticker/price", {
+      params: { symbol },
+    });
     const price = parseFloat(response?.data?.price);
     if (Number.isFinite(price) && price > 0) {
       return price;
     }
   } catch (err) {
-    console.error("❌ Error obteniendo precio BNB/USDT:", err.message);
+    console.error(`Error obteniendo precio para ${symbol}:`, err.message);
   }
+  return null;
+}
+
+async function getBnbUsdtPrice() {
+  return getBinanceTickerPrice("BNBUSDT");
+}
+
+async function getAssetUsdPrice(code, cache, usdtUsdRate) {
+  if (typeof code !== "string" || code.trim().length === 0) return null;
+  const asset = code.trim().toUpperCase();
+  cache.assetUsdPrices = cache.assetUsdPrices ?? {};
+  if (typeof cache.assetUsdPrices[asset] === "number") {
+    return cache.assetUsdPrices[asset];
+  }
+
+  const quoteOrder = ["USDT", "BUSD", "USDC", "USD"];
+  for (const quote of quoteOrder) {
+    const symbol = `${asset}${quote}`;
+    const quotePrice = await getBinanceTickerPrice(symbol);
+    if (quotePrice && quotePrice > 0) {
+      const quoteUsdRate = quote === "USD" ? 1 : usdtUsdRate;
+      if (quoteUsdRate) {
+        const usdPrice = Number((quotePrice * quoteUsdRate).toFixed(8));
+        cache.assetUsdPrices[asset] = usdPrice;
+        return usdPrice;
+      }
+    }
+  }
+
   return null;
 }
 
@@ -115,6 +146,11 @@ async function convertFeeToUsd(amount, currency, cache = {}) {
     if (bnbUsdtPrice) {
       return Number((amount * bnbUsdtPrice * usdtUsdRate).toFixed(8));
     }
+  }
+
+  const assetUsdPrice = await getAssetUsdPrice(code, cache, usdtUsdRate);
+  if (assetUsdPrice) {
+    return Number((amount * assetUsdPrice).toFixed(8));
   }
 
   // fallback: devolver monto original si no se pudo convertir
@@ -387,3 +423,5 @@ export async function deleteTransaction(req, res) {
     res.status(500).json({ error: err.message });
   }
 }
+
+
