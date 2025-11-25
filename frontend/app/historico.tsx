@@ -467,6 +467,10 @@ export default function HistoricoScreen() {
               <Text style={styles.value}>{formatDate(item.closeDate)}</Text>
             </View>
             <View style={styles.row}>
+              <Text style={styles.label}>Precio cierre:</Text>
+              <Text style={styles.value}>{formatPrice(item.closePrice)}</Text>
+            </View>
+            <View style={styles.row}>
               <Text style={styles.label}>Valor cierre:</Text>
               <Text style={styles.value}>{formatFiat(item.closeValueFiat, item.fiatCurrency)}</Text>
             </View>
