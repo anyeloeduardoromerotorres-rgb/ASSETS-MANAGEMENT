@@ -159,14 +159,31 @@ async function convertFeeToUsd(amount, currency, cache = {}) {
 
 /**
  * Helper: calcula profit % y total en fiat
+ * Para LONG: ganancia = closeValue - openValue (compraste barato, vendiste caro)
+ * Para SHORT: ganancia = openValue - closeValue (vendiste caro, compraste barato)
  */
 function calculateProfit(transaction) {
   if (
     transaction.closeValueFiat != null &&
     transaction.openValueFiat != null
   ) {
-    const grossProfit = transaction.closeValueFiat - transaction.openValueFiat;
     const totalFees = (transaction.openFee || 0) + (transaction.closeFee || 0);
+    let grossProfit;
+
+    if (transaction.type === "short") {
+      // SHORT: ganancia cuando closeValue < openValue
+      // Vendiste a openPrice, compraste a closePrice
+      // Profit = (cantidad * (openPrice - closePrice)) - fees
+      // En términos de valores: openValue - closeValue
+      grossProfit = transaction.openValueFiat - transaction.closeValueFiat;
+    } else {
+      // LONG: ganancia cuando closeValue > openValue (comportamiento normal)
+      // Compraste a openPrice, vendiste a closePrice
+      // Profit = (cantidad * (closePrice - openPrice)) - fees
+      // En términos de valores: closeValue - openValue
+      grossProfit = transaction.closeValueFiat - transaction.openValueFiat;
+    }
+
     const netProfit = grossProfit - totalFees;
 
     transaction.profitTotalFiat = netProfit;
@@ -312,20 +329,109 @@ export async function closeTransaction(req, res) {
         ? await convertFeeToUsd(normalizedCloseFee, closeFeeCurrency, closeFeeConversionCache)
         : 0;
 
-    if (
-      !Number.isFinite(closePrice) ||
-      closePrice <= 0 ||
-      !Number.isFinite(closeValueFiat) ||
-      closeValueFiat <= 0
-    ) {
+    if (!Number.isFinite(closePrice) || closePrice <= 0) {
+      return res.status(400).json({ error: "closePrice debe ser un número válido" });
+    }
+
+    // Allow providing closeAmount for partial closes. If not provided, assume full close.
+    const requestedCloseAmount = Number(req.body.closeAmount ?? req.body.quantity ?? tx.amount);
+    const closeAmount = Number.isFinite(requestedCloseAmount) && requestedCloseAmount > 0 ? requestedCloseAmount : tx.amount;
+
+    if (closeAmount > tx.amount + Number.EPSILON) {
+      return res.status(400).json({ error: "closeAmount no puede ser mayor que la cantidad abierta" });
+    }
+
+    // Determine closeValueFiat: use provided or compute from price * closeAmount
+    const computedCloseValueFiat = Number.isFinite(closeValueFiat) && closeValueFiat > 0 ? closeValueFiat : Number((closePrice * closeAmount).toFixed(8));
+
+    // If partial close (closeAmount < tx.amount), create a new closed transaction for the closed portion
+    if (closeAmount < tx.amount - 1e-12) {
+      const proportion = closeAmount / tx.amount;
+      const closedOpenValue = Number((tx.openValueFiat * proportion).toFixed(8));
+      const closedOpenFee = Number(((tx.openFee || 0) * proportion).toFixed(8));
+
+      const closedTx = new Transaction({
+        asset: tx.asset,
+        type: tx.type,
+        fiatCurrency: tx.fiatCurrency,
+        openDate: tx.openDate,
+        openPrice: tx.openPrice,
+        amount: Number(closeAmount.toFixed(8)),
+        openValueFiat: closedOpenValue,
+        openFee: closedOpenFee,
+        closeDate: closeDateValue,
+        closePrice: closePrice,
+        closeValueFiat: computedCloseValueFiat,
+        closeFee: closeFee,
+        status: "closed",
+      });
+
+      // Calculate profit for the closed portion
+      calculateProfit(closedTx);
+      await closedTx.save();
+
+      // Update the original transaction to keep remaining open portion
+      tx.amount = Number((tx.amount - closeAmount).toFixed(8));
+      tx.openValueFiat = Number((tx.openValueFiat - closedOpenValue).toFixed(8));
+      tx.openFee = Number(((tx.openFee || 0) - closedOpenFee).toFixed(8));
+      await tx.save();
+
+      // Apply balance adjustments only for the closed portion (closedTx)
+      try {
+        const assetDoc = await Asset.findById(closedTx.asset);
+
+        if (assetDoc) {
+          const { baseAsset, quoteAsset } = splitSymbol(assetDoc.symbol);
+          const baseAssetUpper = baseAsset?.toUpperCase?.() ?? baseAsset;
+          const quoteAssetUpper = quoteAsset?.toUpperCase?.() ?? quoteAsset;
+          const tradeAmount = closedTx.amount;
+          const netQuote = closedTx.closeValueFiat;
+
+          let baseDelta = 0;
+          let quoteDelta = 0;
+
+          if (closedTx.type === "long") {
+            baseDelta = -tradeAmount;
+            quoteDelta = netQuote;
+          } else {
+            baseDelta = tradeAmount;
+            quoteDelta = -netQuote;
+          }
+
+          if (baseAssetUpper === "USD") {
+            await adjustConfigTotal(["totalUSD"], baseDelta);
+          } else if (baseAssetUpper === "PEN") {
+            await adjustConfigTotal(["totalPen", "totalPEN"], baseDelta);
+          } else if (assetDoc.type === "stock" || baseAssetUpper === assetDoc.symbol?.toUpperCase?.()) {
+            const currentAmount = extractHoldingAmount(assetDoc.initialInvestment);
+            const newAmount = Math.max(0, currentAmount + baseDelta);
+            assetDoc.initialInvestment = applyHoldingAmount(assetDoc.initialInvestment, newAmount);
+            await assetDoc.save();
+          }
+
+          if (quoteAssetUpper === "USD") {
+            await adjustConfigTotal(["totalUSD"], quoteDelta);
+          } else if (quoteAssetUpper === "PEN") {
+            await adjustConfigTotal(["totalPen", "totalPEN"], quoteDelta);
+          }
+        }
+      } catch (adjustErr) {
+        console.error("❌ Error actualizando balances tras cerrar transacción (parcial):", adjustErr.message);
+      }
+
+      return res.status(200).json(closedTx);
+    }
+
+    // Full close path (existing behavior)
+    if (!Number.isFinite(computedCloseValueFiat) || computedCloseValueFiat <= 0) {
       return res.status(400).json({
-        error: "closePrice y closeValueFiat deben ser números válidos",
+        error: "closeValueFiat debe ser un número válido cuando se cierra totalmente",
       });
     }
 
     tx.closeDate = closeDateValue;
     tx.closePrice = closePrice;
-    tx.closeValueFiat = closeValueFiat;
+    tx.closeValueFiat = computedCloseValueFiat;
     tx.closeFee = closeFee;
 
     tx.status = "closed";
@@ -343,7 +449,7 @@ export async function closeTransaction(req, res) {
         const baseAssetUpper = baseAsset?.toUpperCase?.() ?? baseAsset;
         const quoteAssetUpper = quoteAsset?.toUpperCase?.() ?? quoteAsset;
         const tradeAmount = tx.amount;
-        const netQuote = closeValueFiat;
+        const netQuote = tx.closeValueFiat;
 
         let baseDelta = 0;
         let quoteDelta = 0;

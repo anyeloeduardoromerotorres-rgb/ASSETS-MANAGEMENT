@@ -1605,6 +1605,111 @@ export default function TransaccionesScreen() {
 
     setRegisterSubmitting(true);
     try {
+      // Check open positions for this asset and try to close according to rules
+      const assetId = registerTarget.assetId;
+      const openByAsset = openPositionsByAssetRef.current.get(assetId) as OpenPositionsByAsset | undefined;
+
+      // If registering a BUY (long) and there are SHORT positions, try to close them
+      if (normalizedType === "long" && openByAsset?.shorts?.length) {
+        const opStub = {
+          id: "local-register-stub",
+          assetId,
+          symbol: registerTarget.symbol ?? assetId,
+          baseAsset: registerTarget.baseAsset,
+          quoteAsset: registerTarget.quoteAsset,
+          fiatCurrency,
+          suggestedBaseAmount: amount,
+          price,
+          suggestedFiatValue: openValueFiat,
+          action: "buy",
+          usdtUsdRate: registerTarget.usdtUsdRate ?? 1,
+          allocation: registerTarget.allocation ?? 0,
+        } as unknown as Operation;
+
+        const plan = buildClosurePlan(opStub, openByAsset.shorts, "buy");
+        if (plan && plan.entries.length) {
+            for (const e of plan.entries) {
+            await api.put(`/transactions/${e.id}/close`, {
+              closeAmount: e.amount,
+              closePrice: e.closePrice,
+              closeValueFiat: e.closeValueFiat,
+              closeDate: (payload.openDate as string) || new Date().toISOString(),
+              closeFee: Number(((fee || 0) * (e.amount / Math.max(amount, 1))).toFixed(8)),
+            });
+          }
+
+          const residual = amount - plan.baseUsed;
+          if (residual > BASE_TOLERANCE) {
+            await api.post("/transactions", {
+              asset: assetId,
+              type: "long",
+              amount: residual,
+              openPrice: price,
+              openValueFiat: Number((residual * price).toFixed(8)),
+              openFee: Number(((fee || 0) * (residual / Math.max(amount, 1))).toFixed(8)),
+              openDate: (payload.openDate as string) || new Date().toISOString(),
+              status: "open",
+            });
+          }
+
+          Alert.alert("Transacción registrada", "Se cerraron posiciones existentes según el plan.");
+          closeRegisterModal();
+          await loadData({ silent: true });
+          return;
+        }
+      }
+
+      // If registering a SELL (short) and there are LONG positions, try to close them
+      if (normalizedType === "short" && openByAsset?.longs?.length) {
+        const opStub = {
+          id: "local-register-stub",
+          assetId,
+          symbol: registerTarget.symbol ?? assetId,
+          baseAsset: registerTarget.baseAsset,
+          quoteAsset: registerTarget.quoteAsset,
+          fiatCurrency,
+          suggestedBaseAmount: amount,
+          price,
+          suggestedFiatValue: openValueFiat,
+          action: "sell",
+          usdtUsdRate: registerTarget.usdtUsdRate ?? 1,
+          allocation: registerTarget.allocation ?? 0,
+        } as unknown as Operation;
+
+        const plan = buildClosurePlan(opStub, openByAsset.longs, "sell");
+        if (plan && plan.entries.length) {
+          for (const e of plan.entries) {
+            await api.put(`/transactions/${e.id}/close`, {
+              closeAmount: e.amount,
+              closePrice: e.closePrice,
+              closeValueFiat: e.closeValueFiat,
+              closeDate: (payload.openDate as string) || new Date().toISOString(),
+              closeFee: Number(((fee || 0) * (e.amount / Math.max(amount, 1))).toFixed(8)),
+            });
+          }
+
+          const residual = amount - plan.baseUsed;
+          if (residual > BASE_TOLERANCE) {
+            await api.post("/transactions", {
+              asset: assetId,
+              type: "short",
+              amount: residual,
+              openPrice: price,
+              openValueFiat: Number((residual * price).toFixed(8)),
+              openFee: Number(((fee || 0) * (residual / Math.max(amount, 1))).toFixed(8)),
+              openDate: (payload.openDate as string) || new Date().toISOString(),
+              status: "open",
+            });
+          }
+
+          Alert.alert("Transacción registrada", "Se cerraron posiciones existentes según el plan.");
+          closeRegisterModal();
+          await loadData({ silent: true });
+          return;
+        }
+      }
+
+      // Default: create a new opening transaction
       await api.post("/transactions", payload);
       Alert.alert("Transacción registrada", "La transacción se guardó correctamente.");
       closeRegisterModal();
@@ -1690,7 +1795,7 @@ export default function TransaccionesScreen() {
       action: "buy",
       suggestedBaseAmount: 0,
       suggestedFiatValue: 0,
-      targetBaseUsd: 0,
+                targetBaseUsd: 0,
       targetQuoteUsd: 0,
       targetBasePercent: 0,
       actualBaseUsd: 0,
@@ -2397,6 +2502,13 @@ const createEmptyRegisterForm = (): RegisterFormState => ({
   openFeeCurrency: "USDT",
   openDate: new Date().toISOString(),
 });
+// NOTE: `submitRegisterForm` removed because it referenced component state
+// (e.g. `registerForm`, `registerTarget`, `openPositionsByAssetRef`) from
+// module scope which caused runtime errors. The component already defines
+// `handleRegisterSubmit` (a `useCallback` inside the component) which is
+// the correct entrypoint for submitting the register form and performing
+// API calls. Keep that implementation and bind it to the modal submit button.
+
 
 // Estilos visuales de la pantalla.
 const styles = StyleSheet.create({
