@@ -1,4 +1,5 @@
 // services/linearRegression.js
+import Asset from "../models/asset.model.js";
 import CloseHistory from "../models/pairHistorical.model.js";
 
 /**
@@ -9,6 +10,11 @@ import CloseHistory from "../models/pairHistorical.model.js";
  * @returns {Number} rendimiento anual en %
  */
 export async function calculateSlope(symbolId) {
+  const asset = await Asset.findById(symbolId);
+  if (!asset) {
+    throw new Error("Asset no encontrado para calcular pendiente");
+  }
+
   // 1️⃣ Buscar historial en la base
   const history = await CloseHistory.findOne({ symbol: symbolId });
   if (!history) {
@@ -40,7 +46,8 @@ export async function calculateSlope(symbolId) {
   const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
 
   // 6️⃣ Convertir a % anual compuesto
-  const annualizedReturn = (Math.exp(slope * 252) - 1) * 100;
+  const annualizationDays = asset.type === "crypto" ? 365 : 252;
+  const annualizedReturn = (Math.exp(slope * annualizationDays) - 1) * 100;
 
   return annualizedReturn;
 }

@@ -5,20 +5,37 @@ import Exchange from "../models/exchange.model.js";
 
 dotenv.config();
 
-const apiKey = process.env.BINANCE_API_KEY;
-const apiSecret = process.env.BINANCE_SECRET_KEY;
+const apiKey = process.env.BINANCE_API_KEY?.trim();
+const apiSecret = process.env.BINANCE_SECRET_KEY?.trim();
+
+function normalizeBaseUrl(apiURL) {
+  if (typeof apiURL !== "string" || apiURL.trim().length === 0) {
+    throw new Error("apiURL de BINANCE no configurado");
+  }
+
+  const clean = apiURL.trim();
+  return clean
+    .replace(/\/api\/v3\/?$/i, "/")
+    .replace(/\/+$/, "/");
+}
 
 export async function getBinanceBaseUrl() {
   const exchange = await Exchange.findOne({ name: "BINANCE" });
   if (!exchange) throw new Error("Exchange BINANCE no encontrado en DB");
-  return exchange.apiURL.replace("api/v3/", ""); // nos quedamos con "https://api.binance.com/"
+  return normalizeBaseUrl(exchange.apiURL); // nos quedamos con "https://api.binance.com/"
 }
 
 export function getBinanceHeaders() {
+  if (!apiKey) {
+    throw new Error("BINANCE_API_KEY no configurada");
+  }
   return { "X-MBX-APIKEY": apiKey };
 }
 
 export function signQuery(params = {}) {
+  if (!apiSecret) {
+    throw new Error("BINANCE_SECRET_KEY no configurada");
+  }
   const timestamp = Date.now();
   const query = new URLSearchParams({ ...params, timestamp }).toString();
 

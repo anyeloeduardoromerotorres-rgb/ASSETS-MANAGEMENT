@@ -10,22 +10,42 @@ const assetSchema = new mongoose.Schema ({
         type: mongoose.Schema.Types.ObjectId,
         ref: "Exchange",  // 👈 referencia a Exchange
     },    
+    allocationPercentage:{
+        type: Number,
+        trim: true
+    },
     totalCapitalWhenLastAdded:{
         type: Number,
-        default: 0,
         trim: true
     },
     initialInvestment:{
         type: Object,
     },    
-    maxPriceSevenYear: {
+    high: {
         type: Number,
         require: true,
         trim: true
     },
-    minPriceSevenYear: {
+    low: {
         type: Number,
         trim: true
+    },
+    priceRangeSevenYearDetails: {
+        high: {
+            closeTime: Date,
+            close: Number
+        },
+        lowCalculation: {
+            max: {
+                closeTime: Date,
+                close: Number
+            },
+            min: {
+                closeTime: Date,
+                close: Number
+            },
+            drawdownPercent: Number
+        }
     },
     slope:{
         type: Number,

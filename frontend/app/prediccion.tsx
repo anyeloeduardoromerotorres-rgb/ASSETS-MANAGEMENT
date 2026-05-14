@@ -7,9 +7,16 @@ import { CONFIG_INFO_INITIAL_ID } from "../constants/config";
 import { computeXIRR } from "../utils/xirrmanual"; // tu función XIRR
 import { calculateTotalBalances } from "../utils/calculateTotalBalances";
 
+/** Representa un flujo de caja (depósito, retiro, inversión inicial, etc.) */
 type CashFlow = { amount: number; when: Date };
+
+/** Representa el balance de un activo individual con su valor en USD */
 type Balance = { asset: string; total: number; usdValue: number };
+
+/** Representa los totales de la cartera en USD y PEN */
 type Totals = { usd: number; pen: number };
+
+/** Representa un activo traído de la base de datos con su información de inversión */
 type AssetFromDB = {
   _id: string;
   symbol: string;
@@ -17,11 +24,13 @@ type AssetFromDB = {
   initialInvestment?: number | Record<string, number>;
 };
 
+/** Representa una posición en acciones con cantidad de unidades */
 type StockHolding = {
   asset: string;
   total: number; // unidades (acciones) guardadas en la base
 };
 
+/** Representa el resultado de la proyección financiera a futuro */
 type ProjectionResult =
   | { status: "success"; years: number; monthly: number; target: number }
   | { status: "not_reached" }
@@ -59,8 +68,6 @@ export default function PrediccionScreen() {
   // ====== Estado y refs para replicar cálculo de Balances ======
   const [balances, setBalances] = useState<Balance[]>([]);
   const [totals, setTotals] = useState<Totals>({ usd: 0, pen: 0 });
-  const wsRef = useRef<WebSocket | null>(null);
-  const listenKeyRef = useRef<string | null>(null);
   const [penPrice, setPenPrice] = useState<number | null>(null);
   const [stockHoldings, setStockHoldings] = useState<StockHolding[]>([]);
   const [vooPrice, setVooPrice] = useState<number | null>(null);
@@ -300,35 +307,6 @@ export default function PrediccionScreen() {
     }
   }, []);
 
-  const initWebSocket = useCallback(async () => {
-    try {
-      const res = await api.post("/binance/create-listen-key");
-      listenKeyRef.current = res.data.listenKey;
-      const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${listenKeyRef.current}`);
-      wsRef.current = ws;
-      ws.onopen = () => {};
-      ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.e === "outboundAccountPosition") {
-          fetchBalancesLikeBalancesScreen();
-        }
-      };
-      ws.onclose = () => {};
-      ws.onerror = () => {};
-    } catch (err) {
-      console.error("❌ Error iniciando WebSocket:", err);
-    }
-  }, [fetchBalancesLikeBalancesScreen]);
-
-  const keepAliveListenKey = useCallback(async () => {
-    if (!listenKeyRef.current) return;
-    try {
-      await api.put("/binance/keep-alive-listen-key", { listenKey: listenKeyRef.current });
-    } catch (err) {
-      console.error("❌ Error al renovar listenKey:", err);
-    }
-  }, []);
-
   const fetchAssetsLikeBalances = useCallback(async () => {
     try {
       const res = await api.get<AssetFromDB[]>("/assets");
@@ -466,20 +444,17 @@ export default function PrediccionScreen() {
         console.error("❌ Error obteniendo PrecioVentaUSDT:", err);
       }
     })();
-    initWebSocket();
-
     const interval = setInterval(() => {
-      keepAliveListenKey();
+      fetchBalancesLikeBalancesScreen();
       fetchPenPriceLikeBalances();
       fetchVooPriceLikeBalances();
-    }, 30 * 60 * 1000);
+    }, 60 * 1000);
 
     return () => {
       clearInterval(interval);
       if (priceWsRef.current) try { priceWsRef.current.close(); } catch {}
-      if (wsRef.current) wsRef.current.close();
     };
-  }, [fetchBalancesLikeBalancesScreen, fetchPenPriceLikeBalances, fetchVooPriceLikeBalances, fetchAssetsLikeBalances, initWebSocket, keepAliveListenKey]);
+  }, [fetchBalancesLikeBalancesScreen, fetchPenPriceLikeBalances, fetchVooPriceLikeBalances, fetchAssetsLikeBalances]);
 
   // Refrescar al enfocar la pantalla
   useFocusEffect(

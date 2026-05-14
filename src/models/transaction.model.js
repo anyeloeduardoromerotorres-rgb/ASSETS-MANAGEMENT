@@ -27,12 +27,26 @@ const transactionSchema = new mongoose.Schema(
     amount: { type: Number, required: true }, // cantidad en unidades del asset
     openValueFiat: { type: Number, required: true }, // monto total en fiat
     openFee: { type: Number, default: 0 }, // fee en fiat
+    openFees: [
+      {
+        amount: Number,
+        currency: String,
+        usdValue: Number,
+      },
+    ],
 
     // 📌 Datos de cierre
     closeDate: { type: Date },
     closePrice: { type: Number },
     closeValueFiat: { type: Number }, // monto total en fiat
     closeFee: { type: Number, default: 0 }, // fee en fiat
+    closeFees: [
+      {
+        amount: Number,
+        currency: String,
+        usdValue: Number,
+      },
+    ],
 
     // 📌 Resultados
     profitPercent: { type: Number, default: 0 }, // % de ganancia neta
@@ -50,3 +64,4 @@ const transactionSchema = new mongoose.Schema(
 
 const Transaction = mongoose.model("Transaction", transactionSchema);
 export default Transaction;
+

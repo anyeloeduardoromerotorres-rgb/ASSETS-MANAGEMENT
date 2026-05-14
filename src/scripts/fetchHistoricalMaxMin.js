@@ -46,31 +46,107 @@ export async function getAllDailyCandles(symbol, startTime = 0) {
 
 // ✅ Función robusta: sirve tanto para velas diarias de cripto como para acciones con menos sesiones
 export function getHighLowLastYears(candles, years = 7) {
+  // Fecha actual en milisegundos.
   const now = Date.now();
-  const cutoff = now - years * 365 * 24 * 60 * 60 * 1000;
 
-  // Filtramos solo las velas desde la fecha de corte
+  // Fecha limite hacia atras. Por defecto toma 7 anios de 365 dias.
+  const cutoff = now - years * 365 * 24 * 60 * 60 * 1000;
+  const drawdownCutoff = now - 5 * 365 * 24 * 60 * 60 * 1000;
+
+  // Nos quedamos solo con las velas cuya fecha de cierre cae dentro del rango.
   const filtered = candles.filter(c => c.closeTime.getTime() >= cutoff);
+  const drawdownCandles = candles
+    .filter(c => c.closeTime.getTime() >= drawdownCutoff)
+    .sort((a, b) => a.closeTime.getTime() - b.closeTime.getTime());
 
   if (filtered.length === 0) {
-    return { high: null, low: null }; // No hay datos disponibles
+    // Si no hay datos en ese rango, devolvemos null para ambos valores.
+    return { high: null, low: null };
   }
 
-  let highs = filtered.map(c => (c.high ?? c.close)).filter(v => v != null && !Number.isNaN(v));
-  let lows  = filtered.map(c => (c.low ?? c.close)).filter(v => v != null && !Number.isNaN(v));
+  // Para estas metricas usamos el precio de cierre guardado en closehistories.
+  const highCandles = filtered
+    .map(c => ({
+      closeTime: c.closeTime,
+      close: c.close,
+      value: c.close,
+    }))
+    .filter(c => c.value != null && !Number.isNaN(c.value));
 
-  if (highs.length === 0) {
-    highs = filtered.map(c => c.close).filter(v => v != null && !Number.isNaN(v));
+  // Math.max necesita al menos un valor. Si no hay valores validos, devolvemos null.
+  const highCandle = highCandles.reduce(
+    (max, candle) => (max == null || candle.value > max.value ? candle : max),
+    null
+  );
+  const high = highCandle?.value ?? null;
+
+  if (high == null) {
+    return { high: null, low: null };
   }
 
-  if (lows.length === 0) {
-    lows = filtered.map(c => c.close).filter(v => v != null && !Number.isNaN(v));
+  // Para el low ya no usamos el minimo directo.
+  // Calculamos la mayor caida porcentual desde maximos dentro de los ultimos 5 anios.
+  let runningHigh = null;
+  let runningHighCandle = null;
+  let maxDrawdownPercent = 0;
+  let maxDrawdownMaxCandle = null;
+  let maxDrawdownMinCandle = null;
+
+  for (const candle of drawdownCandles) {
+    const candleHigh = candle.close;
+    const candleLow = candle.close;
+
+    if (candleHigh == null || Number.isNaN(candleHigh)) {
+      continue;
+    }
+
+    if (runningHigh == null || candleHigh > runningHigh) {
+      runningHigh = candleHigh;
+      runningHighCandle = candle;
+    }
+
+    if (runningHigh <= 0 || candleLow == null || Number.isNaN(candleLow)) {
+      continue;
+    }
+
+    const drawdownPercent = (runningHigh - candleLow) / runningHigh;
+
+    if (drawdownPercent > maxDrawdownPercent) {
+      maxDrawdownPercent = drawdownPercent;
+      maxDrawdownMaxCandle = runningHighCandle;
+      maxDrawdownMinCandle = candle;
+    }
   }
 
-  const high = highs.length ? Math.max(...highs) : null;
-  const low  = lows.length ? Math.min(...lows) : null;
+  // Aplicamos esa mayor caida al high calculado con la ventana principal.
+  const low = high * (1 - maxDrawdownPercent);
 
-  return { high, low };
+  // Resultado final usado por el resto del backend para guardar o mostrar estadisticas.
+  return {
+    high,
+    low,
+    details: {
+      high: {
+        closeTime: highCandle.closeTime,
+        close: highCandle.close,
+      },
+      lowCalculation: {
+        max: maxDrawdownMaxCandle
+          ? {
+              closeTime: maxDrawdownMaxCandle.closeTime,
+              close: maxDrawdownMaxCandle.close,
+            }
+          : null,
+        min: maxDrawdownMinCandle
+          ? {
+              closeTime: maxDrawdownMinCandle.closeTime,
+              close: maxDrawdownMinCandle.close,
+            }
+          : null,
+        drawdownPercent: maxDrawdownPercent,
+      },
+    },
+  };
 }
 
 
@@ -89,12 +165,13 @@ export async function getCandlesWithStats(symbol, years, type) {
     candles = await getStockHistory(symbol);
   }
 
-  const { high, low } = getHighLowLastYears(candles, years);
+  const { high, low, details } = getHighLowLastYears(candles, years);
 
   return {
     candles, // todas las velas (con closeTime, close, high, low)
     high,
     low,
+    details,
   };
 }
 

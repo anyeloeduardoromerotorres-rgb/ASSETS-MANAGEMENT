@@ -317,6 +317,11 @@ export default function BalancesScreen() {
     [balances, stockBalances, totals, penPrice, usdtSellPrice, pricesTick]
   );
 
+  const visibleBalances = useMemo(
+    () => extendedBalances.filter(balance => balance.usdValue >= 1),
+    [extendedBalances]
+  );
+
   // Arrancar (o reiniciar) stream de precios cuando cambie la lista de assets
   useEffect(() => {
     const assets = balances.map(b => b.asset);
@@ -336,7 +341,7 @@ export default function BalancesScreen() {
 
       {loading ? (
         <ActivityIndicator size="large" />
-      ) : extendedBalances.length === 0 ? (
+      ) : visibleBalances.length === 0 ? (
         <Text style={styles.empty}>No tienes balances en este momento</Text>
       ) : (
         <ScrollView>
@@ -346,7 +351,7 @@ export default function BalancesScreen() {
             <Text style={[styles.headerCell, styles.usdHeader]}>USD / Precio</Text>
           </View>
 
-          {extendedBalances.map((b) => {
+          {visibleBalances.map((b) => {
             let price: number | null = null;
             if (b.asset === 'USDT') price = usdtSellPrice ?? 1;
             else if (b.asset === 'USD') price = 1;

@@ -28,8 +28,8 @@ type AssetDocument = {
   symbol: string;
   type: "fiat" | "crypto" | "stock" | "commodity";
   totalCapitalWhenLastAdded: number;
-  maxPriceSevenYear: number;
-  minPriceSevenYear: number;
+  high: number;
+  low: number;
   slope?: number;
   initialInvestment?: number | Record<string, number>;
   exchange?:
@@ -60,6 +60,7 @@ type Operation = {
   id: string; // Identificador único de la operación sugerida o consolidada
   assetId: string; // ID del activo en la base de datos interna
   symbol: string; // Ticker/par del activo (ej. BTCUSDT)
+  assetType?: AssetDocument["type"]; // Tipo del activo origen
   baseAsset: string; // Activo base del par (ej. BTC en BTCUSDT)
   quoteAsset: string; // Activo de cotización del par (ej. USDT en BTCUSDT)
   fiatCurrency: string; // Moneda fiat de referencia para cálculos/reportes (ej. USD, PEN)
@@ -84,6 +85,8 @@ type Operation = {
     amount: number; // Cantidad base a cerrar en esa posición
     closeValueFiat: number; // Valor fiat estimado al cierre
     closePrice: number; // Precio esperado/objetivo de cierre, se usa precio actual.
+    openPrice?: number;
+    closureReason?: "profit" | "range_loss";
   }>; // Plan de cierres parciales (si corresponde)
   residualBaseAmount?: number; // Cantidad base remanente tras cerrar posiciones y ejecutar
   residualFiatValue?: number; // Valor fiat remanente tras la ejecución
@@ -131,7 +134,14 @@ type RegisterFormState = {
   fiatCurrency: string; // Moneda fiat/quote usada en el registro, es el symbolo del la moneda quote ej. USD, PEN
   openFee: string; // Fee de apertura (texto)
   openFeeCurrency: string; // Moneda del fee
+  openFee2: string; // Segundo fee de apertura (texto)
+  openFeeCurrency2: string; // Moneda del segundo fee
   openDate: string; // Fecha/hora de apertura en formato string
+};
+
+type FeePartPayload = {
+  amount: number;
+  currency: string;
 };
 // transactionDoc: estructura del documento de transacción en la base de datos. solo maneja los datos de apertura de la
 // transacción. los datos de cierre se manejan por separado. se trae los datos directamente de la base de datos.
@@ -171,6 +181,36 @@ const parseNumberInput = (value: string) => {
   const normalized = value.replace(/,/g, ".");
   const parsed = parseFloat(normalized);
   return Number.isFinite(parsed) ? parsed : NaN;
+};
+
+const buildFeeParts = (
+  firstAmountText: string,
+  firstCurrency: string,
+  secondAmountText: string,
+  secondCurrency: string,
+  fallbackCurrency: string
+): FeePartPayload[] => {
+  const candidates = [
+    { amount: parseNumberInput(firstAmountText), currency: firstCurrency || fallbackCurrency },
+    { amount: parseNumberInput(secondAmountText), currency: secondCurrency || fallbackCurrency },
+  ];
+
+  return candidates
+    .filter(item => Number.isFinite(item.amount) && item.amount > 0)
+    .map(item => ({
+      amount: Number(item.amount.toFixed(8)),
+      currency: item.currency.toUpperCase(),
+    }));
+};
+
+const prorateFeeParts = (feeParts: FeePartPayload[], ratio: number): FeePartPayload[] => {
+  if (!Number.isFinite(ratio) || ratio <= 0) return [];
+  return feeParts
+    .map(fee => ({
+      amount: Number((fee.amount * ratio).toFixed(8)),
+      currency: fee.currency,
+    }))
+    .filter(fee => fee.amount > 0);
 };
 
 const isLikelyObjectId = (value: string) => /^[0-9a-fA-F]{24}$/.test(value); // Heurística simple para ObjectId de Mongo
@@ -277,8 +317,7 @@ const formatQuoteValue = (value: number, asset: string) => {
 // buildClosurePlan: selecciona posiciones abiertas para cerrar priorizando cercanía de openPrice al precio actual.
 // Reglas:
 // - Cierra primero la posición cuyo openPrice esté más cerca del precio de cierre actual y sea rentable.
-// - No propone cerrar (ni parcial ni total) posiciones que quedarían en pérdida, salvo un remanente mínimo.
-// - Si queda un remanente mínimo para completar la cantidad sugerida, permite cubrirlo con FIFO sobre posiciones en pérdida.
+// - Solo permite cerrar en pérdida si el openPrice quedó fuera del rango low/high del activo.
 const buildClosurePlan = (
   op: Operation,
   orders: OpenPosition[],
@@ -287,7 +326,14 @@ const buildClosurePlan = (
   | {
       baseUsed: number;
       quoteUsed: number;
-      entries: Array<{ id: string; amount: number; closeValueFiat: number; closePrice: number }>;
+      entries: Array<{
+        id: string;
+        amount: number;
+        closeValueFiat: number;
+        closePrice: number;
+        openPrice: number;
+        closureReason: "profit" | "range_loss";
+      }>;
     }
   | null => {
   if (!orders.length) return null;
@@ -296,11 +342,17 @@ const buildClosurePlan = (
 
   let baseUsed = 0;
   let quoteUsed = 0;
-  const entries: Array<{ id: string; amount: number; closeValueFiat: number; closePrice: number }> = [];
+  const entries: Array<{
+    id: string;
+    amount: number;
+    closeValueFiat: number;
+    closePrice: number;
+    openPrice: number;
+    closureReason: "profit" | "range_loss";
+  }> = [];
   const currentPrice = op.price;
   const quoteUpper = op.quoteAsset?.toUpperCase?.() ?? op.quoteAsset;
   const quoteDecimals = quoteUpper === "USDT" ? 8 : (quoteUpper === "USD" || quoteUpper === "PEN" ? 3 : 2);
-  const orderUsage = new Map<string, number>();
 
   // 1) Ordenar por cercanía del openPrice al precio actual (más cercano primero)
   const sorted = [...orders].sort((a, b) => {
@@ -321,7 +373,14 @@ const buildClosurePlan = (
     return profit > PROFIT_TOLERANCE;
   };
 
-  // 2) Consumir solo posiciones rentables, por cercanía
+  const shouldForceLossCloseByRange = (order: OpenPosition) => {
+    if (action === "buy") {
+      return Number.isFinite(op.minPrice) && order.openPrice < (op.minPrice ?? 0);
+    }
+    return Number.isFinite(op.maxPrice) && order.openPrice > (op.maxPrice ?? 0);
+  };
+
+  // 2) Consumir posiciones rentables, o pérdidas excepcionales por rango, por cercanía
   for (const order of sorted) {
     if (order.amount <= 0) continue;
     const remaining = availableBase - baseUsed;
@@ -329,7 +388,9 @@ const buildClosurePlan = (
     const take = Math.min(order.amount, remaining);
     if (take <= BASE_TOLERANCE) continue;
 
-    if (!isProfitable(order, take)) continue; // no cerrar en pérdida
+    const profitable = isProfitable(order, take);
+    const forcedByRange = shouldForceLossCloseByRange(order);
+    if (!profitable && !forcedByRange) continue; // no cerrar en pérdida fuera de la regla de rango
 
     const currentQuote = take * currentPrice;
     baseUsed = Number((baseUsed + take).toFixed(8));
@@ -339,36 +400,9 @@ const buildClosurePlan = (
       amount: Number(take.toFixed(8)),
       closeValueFiat: Number(currentQuote.toFixed(quoteDecimals)),
       closePrice: currentPrice,
+      openPrice: order.openPrice,
+      closureReason: profitable ? "profit" : "range_loss",
     });
-    orderUsage.set(order.id, (orderUsage.get(order.id) ?? 0) + take);
-  }
-
-  // 3) Si queda un remanente mínimo, permitir cubrirlo con FIFO sobre las no rentables
-  let remainingAfterProfitable = availableBase - baseUsed;
-  if (remainingAfterProfitable > BASE_TOLERANCE) {
-    for (const order of orders) {
-      if (order.amount <= 0) continue;
-      remainingAfterProfitable = availableBase - baseUsed;
-      if (remainingAfterProfitable <= BASE_TOLERANCE) break;
-
-      const alreadyUsed = orderUsage.get(order.id) ?? 0;
-      const remainingCapacity = Math.max(order.amount - alreadyUsed, 0);
-      if (remainingCapacity <= BASE_TOLERANCE) continue;
-
-      const take = Math.min(remainingCapacity, remainingAfterProfitable);
-      if (take <= BASE_TOLERANCE) continue;
-
-      const currentQuote = take * currentPrice;
-      baseUsed = Number((baseUsed + take).toFixed(8));
-      quoteUsed = Number((quoteUsed + currentQuote).toFixed(quoteDecimals));
-      entries.push({
-        id: order.id,
-        amount: Number(take.toFixed(8)),
-        closeValueFiat: Number(currentQuote.toFixed(quoteDecimals)),
-        closePrice: currentPrice,
-      });
-      orderUsage.set(order.id, alreadyUsed + take);
-    }
   }
 
   if (!entries.length) return null;
@@ -452,6 +486,8 @@ const adjustOperationForClosings = (
         amount: Number(entry.amount.toFixed(8)),
         closeValueFiat: Number(entry.closeValueFiat.toFixed(quoteDec)),
         closePrice: entry.closePrice,
+        openPrice: entry.openPrice,
+        closureReason: entry.closureReason,
       })),
       residualBaseAmount: residualBase,
       residualFiatValue: residualFiat,
@@ -520,6 +556,8 @@ const adjustOperationForClosings = (
         amount: Number(entry.amount.toFixed(8)),
         closeValueFiat: Number(entry.closeValueFiat.toFixed(quoteDec)),
         closePrice: entry.closePrice,
+        openPrice: entry.openPrice,
+        closureReason: entry.closureReason,
       })),
       residualBaseAmount: residualBase,
       residualFiatValue: residualFiat,
@@ -550,6 +588,7 @@ export default function TransaccionesScreen() {
   const [registerForm, setRegisterForm] = useState<RegisterFormState>(() => createEmptyRegisterForm()); // formulario de registro
   const [registerError, setRegisterError] = useState<string | null>(null); // errores del formulario
   const [registerSubmitting, setRegisterSubmitting] = useState(false); // flag de envío en progreso
+  const [showSecondFee, setShowSecondFee] = useState(false); // muestra el segundo fee solo cuando el usuario lo necesita
   const [datePickerVisible, setDatePickerVisible] = useState(false); // controla el modal del selector de fecha
   const [datePickerValue, setDatePickerValue] = useState<Date>(() => new Date()); // valor temporal del selector
   const [assetOptions, setAssetOptions] = useState<AssetDocument[]>([]); // catálogo de pares disponibles
@@ -905,18 +944,18 @@ export default function TransaccionesScreen() {
           let price = scenarioPrice ?? fetchedPrice ?? null;
           if (!price || price <= 0) return;
 
-          let minPrice = asset.minPriceSevenYear;
-          let maxPrice = asset.maxPriceSevenYear;
+          let minPrice = asset.low;
+          let maxPrice = asset.high;
 
           if (allowUpdates) {
             const updates: Partial<AssetDocument> = {};
             if (price < minPrice) {
               minPrice = price;
-              updates.minPriceSevenYear = price;
+              updates.low = price;
             }
             if (price > maxPrice) {
               maxPrice = price;
-              updates.maxPriceSevenYear = price;
+              updates.high = price;
             }
 
             if (Object.keys(updates).length > 0) {
@@ -1038,6 +1077,7 @@ export default function TransaccionesScreen() {
             id: `${asset._id}-${priceLabel ?? 'spot'}-${action}`,
             assetId: asset._id,
             symbol: asset.symbol,
+            assetType: asset.type,
             action,
             baseAsset,
             quoteAsset,
@@ -1428,7 +1468,8 @@ export default function TransaccionesScreen() {
     (operation: Operation) => {
       const derived = resolveOperationForAction(operation);
       const defaultType: "long" | "short" = derived.action === "sell" ? "short" : "long";
-      const fiatCurrency = derived.quoteAsset?.toUpperCase?.() ?? "USDT";
+      const isStock = derived.assetType === "stock";
+      const fiatCurrency = isStock ? "USD" : derived.quoteAsset?.toUpperCase?.() ?? "USDT";
       const pricePrecision = fiatCurrency === "USDT" ? 8 : 6;
       const defaultPrice = formatNumberForInput(derived.price, pricePrecision);
       const defaultAmount = formatNumberForInput(derived.suggestedBaseAmount, 8);
@@ -1449,9 +1490,12 @@ export default function TransaccionesScreen() {
         openValueFiat: defaultFiat,
         fiatCurrency,
         openFee: "",
-        openFeeCurrency: derived.isBinance ? "BNB" : "USD",
+        openFeeCurrency: isStock ? "USD" : derived.isBinance ? "BNB" : "USD",
+        openFee2: "",
+        openFeeCurrency2: isStock ? "USD" : derived.baseAsset?.toUpperCase?.() ?? "BTC",
         openDate: defaultOpenDate,
       });
+      setShowSecondFee(false);
       setRegisterError(null);
       setRegisterModalVisible(true);
     },
@@ -1459,13 +1503,17 @@ export default function TransaccionesScreen() {
   );
 
   const registerOpenDateLabel = useMemo(() => formatDateTimeLabel(registerForm.openDate), [registerForm.openDate]);
+  const isRegisterStock = registerTarget?.assetType === "stock";
   const feeCurrencyOptions = useMemo(() => {
+    if (isRegisterStock) {
+      return ["USD"];
+    }
     const baseAssetOption = registerTarget?.baseAsset?.toUpperCase?.();
     if (baseAssetOption && !DEFAULT_FEE_CURRENCIES.includes(baseAssetOption)) {
       return [...DEFAULT_FEE_CURRENCIES, baseAssetOption];
     }
     return DEFAULT_FEE_CURRENCIES;
-  }, [registerTarget?.baseAsset]);
+  }, [isRegisterStock, registerTarget?.baseAsset]);
 
   // Helper para cerrar el modal de registro y limpiar estado temporal.
   const closeRegisterModal = useCallback(() => {
@@ -1473,6 +1521,7 @@ export default function TransaccionesScreen() {
     setRegisterTarget(null);
     setRegisterForm(createEmptyRegisterForm());
     setRegisterError(null);
+    setShowSecondFee(false);
     setDatePickerVisible(false);
   }, []);
 
@@ -1530,6 +1579,20 @@ export default function TransaccionesScreen() {
     []
   );
 
+  const toggleSecondFee = useCallback(() => {
+    setShowSecondFee(prev => {
+      const next = !prev;
+      if (!next) {
+        setRegisterForm(current => ({
+          ...current,
+          openFee2: "",
+          openFeeCurrency2: registerTarget?.baseAsset?.toUpperCase?.() ?? "BTC",
+        }));
+      }
+      return next;
+    });
+  }, [registerTarget?.baseAsset]);
+
   // recalculateRegisterFiat: recalcula el valor fiat a partir de precio * cantidad.
   const recalculateRegisterFiat = useCallback(() => {
     const price = parseNumberInput(registerForm.openPrice);
@@ -1550,7 +1613,6 @@ export default function TransaccionesScreen() {
     const price = parseNumberInput(registerForm.openPrice);
     const amount = parseNumberInput(registerForm.amount);
     let openValueFiat = parseNumberInput(registerForm.openValueFiat);
-    const fee = parseNumberInput(registerForm.openFee);
 
     if (!Number.isFinite(price) || price <= 0) {
       setRegisterError("Ingresa un precio válido.");
@@ -1576,9 +1638,18 @@ export default function TransaccionesScreen() {
       return;
     }
 
-    const fiatCurrency = (registerForm.fiatCurrency || registerTarget.quoteAsset || "USDT").toUpperCase();
+    const fiatCurrency =
+      registerTarget.assetType === "stock"
+        ? "USD"
+        : (registerForm.fiatCurrency || registerTarget.quoteAsset || "USDT").toUpperCase();
     const normalizedType: "long" | "short" = registerForm.type === "short" ? "short" : "long";
-    const feeCurrency = (registerForm.openFeeCurrency || fiatCurrency).toUpperCase();
+    const feeParts = buildFeeParts(
+      registerForm.openFee,
+      registerForm.openFeeCurrency,
+      registerForm.openFee2,
+      registerForm.openFeeCurrency2,
+      fiatCurrency
+    );
 
     const payload: Record<string, unknown> = {
       asset: registerTarget.assetId,
@@ -1589,9 +1660,8 @@ export default function TransaccionesScreen() {
       openValueFiat,
     };
 
-    if (Number.isFinite(fee) && fee > 0) {
-      payload.openFee = fee;
-      payload.openFeeCurrency = feeCurrency;
+    if (feeParts.length > 0) {
+      payload.openFees = feeParts;
     }
 
     if (registerForm.openDate.trim().length > 0) {
@@ -1634,7 +1704,7 @@ export default function TransaccionesScreen() {
               closePrice: e.closePrice,
               closeValueFiat: e.closeValueFiat,
               closeDate: (payload.openDate as string) || new Date().toISOString(),
-              closeFee: Number(((fee || 0) * (e.amount / Math.max(amount, 1))).toFixed(8)),
+              closeFees: prorateFeeParts(feeParts, e.amount / Math.max(amount, 1)),
             });
           }
 
@@ -1643,10 +1713,11 @@ export default function TransaccionesScreen() {
             await api.post("/transactions", {
               asset: assetId,
               type: "long",
+              fiatCurrency,
               amount: residual,
               openPrice: price,
               openValueFiat: Number((residual * price).toFixed(8)),
-              openFee: Number(((fee || 0) * (residual / Math.max(amount, 1))).toFixed(8)),
+              openFees: prorateFeeParts(feeParts, residual / Math.max(amount, 1)),
               openDate: (payload.openDate as string) || new Date().toISOString(),
               status: "open",
             });
@@ -1684,7 +1755,7 @@ export default function TransaccionesScreen() {
               closePrice: e.closePrice,
               closeValueFiat: e.closeValueFiat,
               closeDate: (payload.openDate as string) || new Date().toISOString(),
-              closeFee: Number(((fee || 0) * (e.amount / Math.max(amount, 1))).toFixed(8)),
+              closeFees: prorateFeeParts(feeParts, e.amount / Math.max(amount, 1)),
             });
           }
 
@@ -1693,10 +1764,11 @@ export default function TransaccionesScreen() {
             await api.post("/transactions", {
               asset: assetId,
               type: "short",
+              fiatCurrency,
               amount: residual,
               openPrice: price,
               openValueFiat: Number((residual * price).toFixed(8)),
-              openFee: Number(((fee || 0) * (residual / Math.max(amount, 1))).toFixed(8)),
+              openFees: prorateFeeParts(feeParts, residual / Math.max(amount, 1)),
               openDate: (payload.openDate as string) || new Date().toISOString(),
               status: "open",
             });
@@ -1763,7 +1835,8 @@ export default function TransaccionesScreen() {
     }
 
     const { baseAsset, quoteAsset } = splitSymbol(asset.symbol);
-    const normalizedQuote = quoteAsset.toUpperCase();
+    const isStockAsset = asset.type === "stock";
+    const normalizedQuote = isStockAsset ? "USD" : quoteAsset.toUpperCase();
     const exchangeValue = asset.exchange ?? asset.exchangeName ?? null;
     const exchangeId =
       typeof asset.exchange === "string"
@@ -1783,6 +1856,7 @@ export default function TransaccionesScreen() {
       id: `manual-${asset._id}`,
       assetId: asset._id,
       symbol: asset.symbol,
+      assetType: asset.type,
       baseAsset,
       quoteAsset: normalizedQuote,
       fiatCurrency: normalizedQuote,
@@ -1812,9 +1886,12 @@ export default function TransaccionesScreen() {
       openValueFiat: "",
       fiatCurrency: normalizedQuote,
       openFee: "",
-      openFeeCurrency: binance ? "BNB" : "USD",
+      openFeeCurrency: isStockAsset ? "USD" : binance ? "BNB" : "USD",
+      openFee2: "",
+      openFeeCurrency2: isStockAsset ? "USD" : baseAsset.toUpperCase(),
       openDate: new Date().toISOString(),
     });
+    setShowSecondFee(false);
     setRegisterError(null);
     setAddTransactionModalVisible(false);
     setRegisterModalVisible(true);
@@ -2049,7 +2126,11 @@ export default function TransaccionesScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             {selectedOperation ? (
-              <>
+              <ScrollView
+                style={styles.suggestionModalScroll}
+                contentContainerStyle={styles.suggestionModalScrollContent}
+                showsVerticalScrollIndicator
+              >
                 <Text style={styles.modalTitle}>{selectedOperation.symbol}</Text>
                 <Text style={styles.modalLabel}>
                   Precio actual: ${selectedOperation.price.toFixed(4)}
@@ -2063,6 +2144,55 @@ export default function TransaccionesScreen() {
                     formatQuoteValue(selectedOperation.suggestedFiatValue, selectedOperation.quoteAsset)
                   })
                 </Text>
+                {selectedOperation.closingPositions?.length ? (
+                  <View style={styles.closingSection}>
+                    <Text style={styles.modalLabel}>
+                      Operaciones a cerrar ({selectedOperation.closingPositions.length})
+                    </Text>
+                    {selectedOperation.closingPositions.map((position, index) => (
+                      <View key={`${position.id}-${index}`} style={styles.closingItem}>
+                        <Text style={styles.closingItemTitle}>
+                          Cierre {index + 1}
+                        </Text>
+                        <Text style={styles.closingItemText}>
+                          Cantidad: {formatAssetAmount(position.amount, selectedOperation.baseAsset)}{' '}
+                          {selectedOperation.baseAsset}
+                        </Text>
+                        <Text style={styles.closingItemText}>
+                          Valor: {formatQuoteValue(position.closeValueFiat, selectedOperation.quoteAsset)}
+                        </Text>
+                        <Text style={styles.closingItemText}>
+                          Precio apertura: {typeof position.openPrice === "number" ? `$${position.openPrice.toFixed(6)}` : "-"}
+                        </Text>
+                        <Text style={styles.closingItemText}>
+                          Precio cierre: ${position.closePrice.toFixed(6)}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.closingItemText,
+                            position.closureReason === "range_loss" && styles.closingItemWarning,
+                          ]}
+                        >
+                          Motivo: {position.closureReason === "range_loss" ? "cierre en perdida por rango low/high" : "cierre rentable"}
+                        </Text>
+                      </View>
+                    ))}
+                    {selectedOperation.residualBaseAmount && selectedOperation.residualBaseAmount > BASE_TOLERANCE ? (
+                      <Text style={styles.closingResidualText}>
+                        Residual a abrir: {formatAssetAmount(
+                          selectedOperation.residualBaseAmount,
+                          selectedOperation.baseAsset
+                        )}{' '}
+                        {selectedOperation.baseAsset} ({
+                          formatQuoteValue(
+                            selectedOperation.residualFiatValue ?? 0,
+                            selectedOperation.quoteAsset
+                          )
+                        })
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
                 <TouchableOpacity
                   style={[styles.cardButton, styles.modalCloseButton]}
                   onPress={closeSuggestionModal}
@@ -2070,7 +2200,7 @@ export default function TransaccionesScreen() {
                 >
                   <Text style={styles.cardButtonText}>Cerrar</Text>
                 </TouchableOpacity>
-              </>
+              </ScrollView>
             ) : (
               <ActivityIndicator size="large" />
             )}
@@ -2136,7 +2266,12 @@ export default function TransaccionesScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             {registerTarget ? (
-              <>
+              <ScrollView
+                style={styles.registerModalScroll}
+                contentContainerStyle={styles.registerModalScrollContent}
+                showsVerticalScrollIndicator
+                keyboardShouldPersistTaps="handled"
+              >
                 <Text style={styles.modalTitle}>Registrar {registerTarget.symbol}</Text>
                 <Text style={styles.customDetail}>
                   Base: {registerTarget.baseAsset} | Quote: {registerTarget.quoteAsset}
@@ -2220,14 +2355,19 @@ export default function TransaccionesScreen() {
 
                 <Text style={styles.modalLabel}>Moneda fiat</Text>
                 <TextInput
-                  style={styles.customInput}
+                  style={[styles.customInput, isRegisterStock && styles.customInputDisabled]}
                   value={registerForm.fiatCurrency}
-                  onChangeText={value => handleRegisterFieldChange("fiatCurrency", value.toUpperCase())}
+                  onChangeText={value => {
+                    if (!isRegisterStock) {
+                      handleRegisterFieldChange("fiatCurrency", value.toUpperCase());
+                    }
+                  }}
                   autoCapitalize="characters"
                   placeholder="USDT"
+                  editable={!isRegisterStock}
                 />
 
-                <Text style={styles.modalLabel}>Fee de apertura (opcional)</Text>
+                <Text style={styles.modalLabel}>Fee de apertura 1 (opcional)</Text>
                 <TextInput
                   style={styles.customInput}
                   value={registerForm.openFee}
@@ -2236,7 +2376,7 @@ export default function TransaccionesScreen() {
                   placeholder="0"
                 />
 
-                <Text style={styles.modalLabel}>Moneda del fee</Text>
+                <Text style={styles.modalLabel}>Moneda del fee 1</Text>
                 <View style={styles.modalTypeRow}>
                   {feeCurrencyOptions.map(currency => {
                     const isActive = registerForm.openFeeCurrency === currency;
@@ -2256,6 +2396,50 @@ export default function TransaccionesScreen() {
                     );
                   })}
                 </View>
+
+                <TouchableOpacity
+                  style={styles.addFeeButton}
+                  onPress={toggleSecondFee}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.addFeeButtonText}>
+                    {showSecondFee ? "Ocultar segundo fee" : "Agregar otro fee"}
+                  </Text>
+                </TouchableOpacity>
+
+                {showSecondFee ? (
+                  <>
+                    <Text style={styles.modalLabel}>Fee de apertura 2 (opcional)</Text>
+                    <TextInput
+                      style={styles.customInput}
+                      value={registerForm.openFee2}
+                      onChangeText={value => handleRegisterFieldChange("openFee2", value)}
+                      keyboardType="numeric"
+                      placeholder="0"
+                    />
+
+                    <Text style={styles.modalLabel}>Moneda del fee 2</Text>
+                    <View style={styles.modalTypeRow}>
+                      {feeCurrencyOptions.map(currency => {
+                        const isActive = registerForm.openFeeCurrency2 === currency;
+                        return (
+                          <TouchableOpacity
+                            key={`fee2-${currency}`}
+                            style={[styles.modalTypeButton, isActive && styles.modalTypeButtonActive]}
+                            onPress={() => setRegisterForm(prev => ({ ...prev, openFeeCurrency2: currency }))}
+                            activeOpacity={0.8}
+                          >
+                            <Text
+                              style={[styles.modalTypeButtonText, isActive && styles.modalTypeButtonTextActive]}
+                            >
+                              {currency}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </>
+                ) : null}
 
                 <Text style={styles.modalLabel}>Fecha de apertura</Text>
                 <TouchableOpacity
@@ -2298,7 +2482,7 @@ export default function TransaccionesScreen() {
                 >
                   <Text style={styles.cardButtonText}>Cancelar</Text>
                 </TouchableOpacity>
-              </>
+              </ScrollView>
             ) : (
               <ActivityIndicator size="large" />
             )}
@@ -2489,7 +2673,7 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-const DEFAULT_FEE_CURRENCIES = ["BNB", "USDT", "USD"];
+const DEFAULT_FEE_CURRENCIES = ["BNB", "BTC", "USDT", "USD"];
 
 // createEmptyRegisterForm: plantilla limpia (inicializa con fecha actual) para el formulario de registro.
 const createEmptyRegisterForm = (): RegisterFormState => ({
@@ -2500,6 +2684,8 @@ const createEmptyRegisterForm = (): RegisterFormState => ({
   fiatCurrency: "",
   openFee: "",
   openFeeCurrency: "USDT",
+  openFee2: "",
+  openFeeCurrency2: "BTC",
   openDate: new Date().toISOString(),
 });
 // NOTE: `submitRegisterForm` removed because it referenced component state
@@ -2628,6 +2814,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#333",
   },
+  customInputDisabled: {
+    backgroundColor: "#f1f3f4",
+    color: "#546e7a",
+  },
   datePickerTrigger: {
     borderWidth: 1,
     borderColor: "#d0d0d0",
@@ -2686,10 +2876,25 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     width: "100%",
+    maxHeight: "88%",
     borderRadius: 12,
     padding: 20,
     backgroundColor: "#fff",
     gap: 12,
+  },
+  registerModalScroll: {
+    width: "100%",
+  },
+  registerModalScrollContent: {
+    gap: 12,
+    paddingBottom: 8,
+  },
+  suggestionModalScroll: {
+    width: "100%",
+  },
+  suggestionModalScrollContent: {
+    gap: 12,
+    paddingBottom: 8,
   },
   pairList: {
     maxHeight: 260,
@@ -2768,6 +2973,39 @@ const styles = StyleSheet.create({
     color: "#1b5e20",
     marginBottom: 12,
   },
+  closingSection: {
+    borderWidth: 1,
+    borderColor: "#cfd8dc",
+    borderRadius: 10,
+    backgroundColor: "#f8fbfd",
+    padding: 12,
+    gap: 8,
+  },
+  closingItem: {
+    borderTopWidth: 1,
+    borderTopColor: "#e0e7ef",
+    paddingTop: 8,
+    gap: 2,
+  },
+  closingItemTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#263238",
+  },
+  closingItemText: {
+    fontSize: 13,
+    color: "#455a64",
+  },
+  closingItemWarning: {
+    color: "#c62828",
+    fontWeight: "700",
+  },
+  closingResidualText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#0d47a1",
+    marginTop: 4,
+  },
   modalCloseButton: {
     marginTop: 8,
   },
@@ -2811,5 +3049,16 @@ const styles = StyleSheet.create({
   helperButtonText: {
     color: "#1976d2",
     fontWeight: "600",
+  },
+  addFeeButton: {
+    alignSelf: "flex-start",
+    paddingVertical: 6,
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  addFeeButtonText: {
+    color: "#1976d2",
+    fontWeight: "700",
+    textDecorationLine: "underline",
   },
 });

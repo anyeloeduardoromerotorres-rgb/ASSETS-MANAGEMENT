@@ -22,10 +22,13 @@ interface ConfigDoc {
   total: number;
 }
 
+// Documento minimo que esta pantalla necesita de cada asset.
 interface AssetDoc {
   _id: string;
   symbol?: string;
   initialInvestment?: number | Record<string, unknown> | null;
+  allocationPercentage?: number;
+  totalCapitalWhenLastAdded?: number;
   type?: string;
 }
 
@@ -71,6 +74,7 @@ type BinanceBalanceEntry = {
   usdValue: number;
 };
 
+// Helpers pequenos para normalizar datos antes de usarlos en estado o calculos.
 const findConfigByNames = (docs: ConfigDoc[], names: string[]) =>
   docs.find(doc => names.some(name => doc?.name === name)) ?? null;
 
@@ -81,6 +85,8 @@ const parseInput = (value: string) => {
   const parsed = parseFloat(value.replace(/,/g, "."));
   return Number.isFinite(parsed) ? parsed : NaN;
 };
+
+const roundToEight = (value: number) => Number(value.toFixed(8));
 
 const getInitialInvestmentAmount = (
   initialInvestment?: number | Record<string, unknown> | null
@@ -97,9 +103,11 @@ const getInitialInvestmentAmount = (
 };
 
 export default function Index() {
+  // Estado general de pantalla: carga inicial y mensajes visibles para el usuario.
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState<string | null>(null);
 
+  // Documentos de configuracion persistidos en el backend.
   const [usdConfig, setUsdConfig] = useState<ConfigDoc | null>(null);
   const [penConfig, setPenConfig] = useState<ConfigDoc | null>(null);
   const [usdtBuyConfig, setUsdtBuyConfig] = useState<ConfigDoc | null>(null);
@@ -108,19 +116,26 @@ export default function Index() {
   const [totalUsdConfig, setTotalUsdConfig] = useState<ConfigDoc | null>(null);
   const [assets, setAssets] = useState<AssetDoc[]>([]);
   const [lastCreatedAssetTotal, setLastCreatedAssetTotal] = useState<number | null>(null);
+
+  // Estado del flujo para borrar activos.
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [deletingAsset, setDeletingAsset] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Datos externos usados para calcular el balance total disponible.
   const [binanceBalances, setBinanceBalances] = useState<BinanceBalanceEntry[]>([]);
   const [binanceTotals, setBinanceTotals] = useState<{ usd: number; pen: number } | null>(null);
   const [penUsdRate, setPenUsdRate] = useState<number | null>(null);
   const [vooMarketPrice, setVooMarketPrice] = useState<number | null>(null);
 
+  // Inputs controlados para editar configuraciones numericas.
   const [usdInput, setUsdInput] = useState("");
   const [penInput, setPenInput] = useState("");
   const [usdtBuyInput, setUsdtBuyInput] = useState("");
   const [usdtSellInput, setUsdtSellInput] = useState("");
   const [etoroUsdInput, setEtoroUsdInput] = useState("");
+
+  // Estado del flujo para agregar un nuevo asset crypto o stock.
   const [showAddAssetOptions, setShowAddAssetOptions] = useState(false);
   const [showCryptoSelector, setShowCryptoSelector] = useState(false);
   const [cryptoSymbols, setCryptoSymbols] = useState<string[]>([]);
@@ -133,19 +148,24 @@ export default function Index() {
   const [stockLoading, setStockLoading] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
   const [newAssetDraft, setNewAssetDraft] = useState<NewAssetDraft | null>(null);
+  const [walletPercentageInputs, setWalletPercentageInputs] = useState<Record<string, string>>({});
   const [savingNewAsset, setSavingNewAsset] = useState(false);
   const [newAssetError, setNewAssetError] = useState<string | null>(null);
   const [showDeleteList, setShowDeleteList] = useState(false);
+
+  // Estado por asset para editar los montos de acciones/ETFs.
   const [stockInputs, setStockInputs] = useState<Record<string, string>>({});
   const [stockSavingMap, setStockSavingMap] = useState<Record<string, boolean>>({});
   const [stockErrorMap, setStockErrorMap] = useState<Record<string, string | null>>({});
   const [stockPrices, setStockPrices] = useState<Record<string, number>>({});
 
+  // Banderas de guardado independientes para evitar dobles submits.
   const [savingUsd, setSavingUsd] = useState(false);
   const [savingPen, setSavingPen] = useState(false);
   const [savingUsdt, setSavingUsdt] = useState(false);
   const [savingEtoro, setSavingEtoro] = useState(false);
 
+  // Carga inicial: configuraciones financieras y lista de assets registrados.
   useEffect(() => {
     const fetchConfig = async () => {
       try {
@@ -212,6 +232,7 @@ export default function Index() {
     fetchConfig();
   }, []);
 
+  // Carga los balances de Binance para alimentar el calculo de patrimonio total.
   useEffect(() => {
     const fetchBinanceTotals = async () => {
       try {
@@ -232,6 +253,7 @@ export default function Index() {
     fetchBinanceTotals();
   }, []);
 
+  // Obtiene PEN/USD para convertir saldos en soles al calculo total en USD.
   useEffect(() => {
     const fetchPenRate = async () => {
       try {
@@ -248,6 +270,7 @@ export default function Index() {
     fetchPenRate();
   }, []);
 
+  // VOO se consulta aparte porque tambien puede existir como stock registrado.
   useEffect(() => {
     const hasVoo = assets.some(asset => asset.symbol?.toUpperCase() === "VOO");
     if (!hasVoo) {
@@ -280,6 +303,7 @@ export default function Index() {
     };
   }, [assets]);
 
+  // Valores numericos derivados desde inputs de texto.
   const parsedUsd = useMemo(() => parseInput(usdInput), [usdInput]);
   const parsedEtoroUsd = useMemo(() => parseInput(etoroUsdInput), [etoroUsdInput]);
   const parsedPen = useMemo(() => parseInput(penInput), [penInput]);
@@ -299,17 +323,25 @@ export default function Index() {
     !Number.isNaN(parsedSell) &&
     (parsedBuy !== usdtBuyConfig.total || parsedSell !== usdtSellConfig.total);
 
+  // Filtro local de pares Binance ya descargados.
   const filteredCryptoSymbols = useMemo(() => {
     const query = cryptoSearch.trim().toUpperCase();
     if (!query) return cryptoSymbols;
     return cryptoSymbols.filter(symbol => symbol.includes(query));
   }, [cryptoSymbols, cryptoSearch]);
 
+  // Subconjunto de assets que representan acciones o ETFs.
   const stockAssets = useMemo(
     () => assets.filter(asset => (asset.type ?? "").toLowerCase() === "stock"),
     [assets]
   );
 
+  const nonFiatAssets = useMemo(
+    () => assets.filter(asset => (asset.type ?? "").toLowerCase() !== "fiat"),
+    [assets]
+  );
+
+  // Solo se permite borrar activos no fiat.
   const deletableAssets = useMemo<DeletableAsset[]>(() => {
     return assets
       .filter(asset => (asset.type ?? "").toLowerCase() !== "fiat")
@@ -320,12 +352,14 @@ export default function Index() {
       }));
   }, [assets]);
 
+  // Si se borra o refresca el asset seleccionado, evita mantener una seleccion invalida.
   useEffect(() => {
     if (selectedAssetId && !assets.some(asset => asset._id === selectedAssetId)) {
       setSelectedAssetId(null);
     }
   }, [assets, selectedAssetId]);
 
+  // Sincroniza inputs de stocks cada vez que cambia la lista de acciones registradas.
   useEffect(() => {
     const inputs: Record<string, string> = {};
     stockAssets.forEach(asset => {
@@ -337,6 +371,7 @@ export default function Index() {
     setStockSavingMap({});
   }, [stockAssets]);
 
+  // Consulta el precio actual de un stock/ETF en Yahoo Finance.
   const fetchStockPrice = useCallback(async (symbol: string) => {
     const normalized = symbol?.toUpperCase?.();
     if (!normalized || normalized === "VOO") return;
@@ -357,6 +392,7 @@ export default function Index() {
     }
   }, []);
 
+  // Refresca precios de acciones registradas, excepto VOO que tiene su propio flujo.
   useEffect(() => {
     const symbols = Array.from(
       new Set(
@@ -371,6 +407,7 @@ export default function Index() {
     });
   }, [stockAssets, fetchStockPrice]);
 
+  // Normaliza assets tipo stock al formato esperado por calculateTotalBalances.
   const stockHoldings = useMemo(() => {
     return stockAssets.map(asset => ({
       symbol: asset.symbol?.toUpperCase() ?? "",
@@ -378,6 +415,7 @@ export default function Index() {
     }));
   }, [stockAssets]);
 
+  // Convierte montos de acciones a valor USD usando precios de mercado cuando existen.
   const stockBalances = useMemo(() => {
     return stockAssets.map(asset => {
       const symbol = asset.symbol?.toUpperCase() ?? "";
@@ -399,11 +437,13 @@ export default function Index() {
     });
   }, [stockAssets, vooMarketPrice, stockPrices]);
 
+  // Precio de venta USDT usado como conversion conservadora para saldos USDT.
   const usdtSellPrice = useMemo(() => {
     const raw = Number(usdtSellConfig?.total);
     return Number.isFinite(raw) && raw > 0 ? raw : 1;
   }, [usdtSellConfig]);
 
+  // Ajusta el valor USD de USDT y descarta balances sin valor.
   const adjustedBinanceBalances = useMemo(() => {
     return binanceBalances.map(balance => {
       if (balance.asset === "USDT") {
@@ -416,14 +456,15 @@ export default function Index() {
     }).filter(b => b.usdValue > 0);
   }, [binanceBalances, usdtSellPrice]);
 
-  const usdTotalFromApi = binanceTotals?.usd ?? 0;
-  const penTotalFromApi = binanceTotals?.pen ?? 0;
+  const usdTotalFromConfig = totalUsdConfig?.total ?? binanceTotals?.usd ?? 0;
+  const penTotalFromConfig = penConfig?.total ?? binanceTotals?.pen ?? 0;
 
+  // Balance consolidado: Binance + fiat + acciones registradas.
   const { extendedBalances, totalUsd: totalBalance } = useMemo(
     () =>
       calculateTotalBalances({
         balances: adjustedBinanceBalances,
-        totals: { usd: usdTotalFromApi, pen: penTotalFromApi },
+        totals: { usd: usdTotalFromConfig, pen: penTotalFromConfig },
         penPrice: penUsdRate,
         usdtSellPrice,
         additionalBalances: stockBalances,
@@ -431,8 +472,8 @@ export default function Index() {
     [
       adjustedBinanceBalances,
       stockBalances,
-      usdTotalFromApi,
-      penTotalFromApi,
+      usdTotalFromConfig,
+      penTotalFromConfig,
       penUsdRate,
       usdtSellPrice,
     ]
@@ -440,6 +481,7 @@ export default function Index() {
 
   const nonFiatAssetsCount = useMemo(() => deletableAssets.length, [deletableAssets]);
 
+  // Regla de negocio para permitir agregar otro activo.
   const requiredBalance = useMemo(() => {
     const base = lastCreatedAssetTotal ?? 0;
     return base + nonFiatAssetsCount * 200 + 200;
@@ -447,6 +489,47 @@ export default function Index() {
 
   const canAccessAddAsset = useMemo(() => totalBalance > requiredBalance, [totalBalance, requiredBalance]);
 
+  const walletPercentageRows = useMemo(() => {
+    const rows = nonFiatAssets.map(asset => ({
+      key: asset._id,
+      assetId: asset._id,
+      symbol: asset.symbol ?? "Activo",
+      type: asset.type ?? "",
+      isNew: false,
+    }));
+
+    if (newAssetDraft) {
+      rows.push({
+        key: "__new_asset__",
+        assetId: null,
+        symbol: newAssetDraft.symbol,
+        type: newAssetDraft.type,
+        isNew: true,
+      });
+    }
+
+    return rows;
+  }, [nonFiatAssets, newAssetDraft]);
+
+  const walletPercentageTotal = useMemo(() => {
+    return walletPercentageRows.reduce((sum, row) => {
+      const parsed = parseInput(walletPercentageInputs[row.key] ?? "");
+      return sum + (Number.isNaN(parsed) ? 0 : parsed);
+    }, 0);
+  }, [walletPercentageRows, walletPercentageInputs]);
+
+  const isWalletPercentageTotalValid = Math.abs(walletPercentageTotal - 100) < 0.000001;
+
+  const canSaveNewAsset =
+    !!newAssetDraft &&
+    !savingNewAsset &&
+    isWalletPercentageTotalValid &&
+    walletPercentageRows.every(row => {
+      const parsed = parseInput(walletPercentageInputs[row.key] ?? "");
+      return !Number.isNaN(parsed) && parsed >= 0 && parsed <= 100;
+    });
+
+  // Helper generico para guardar configuraciones simples con campo total.
   const saveValue = async (
     config: ConfigDoc | null,
     parsed: number,
@@ -472,6 +555,7 @@ export default function Index() {
     }
   };
 
+  // Limpia el input al enfocarlo si todavia contiene el valor actual guardado.
   const handleFocusValue = (
     currentValue: number | null | undefined,
     input: string,
@@ -483,11 +567,27 @@ export default function Index() {
     }
   };
 
+  // Actualiza un input de stock y limpia el error de ese asset.
   const handleStockInputChange = useCallback((assetId: string, value: string) => {
     setStockInputs(prev => ({ ...prev, [assetId]: value }));
     setStockErrorMap(prev => ({ ...prev, [assetId]: null }));
   }, []);
 
+  const buildWalletPercentageInputs = useCallback(() => {
+    const inputs: Record<string, string> = {};
+    nonFiatAssets.forEach(asset => {
+      inputs[asset._id] = formatNumber(asset.allocationPercentage ?? 0);
+    });
+    inputs.__new_asset__ = "";
+    return inputs;
+  }, [nonFiatAssets]);
+
+  const handleWalletPercentageChange = useCallback((key: string, value: string) => {
+    setWalletPercentageInputs(prev => ({ ...prev, [key]: value }));
+    setNewAssetError(null);
+  }, []);
+
+  // Guarda el monto registrado para una accion/ETF en initialInvestment.
   const handleSaveStockValue = useCallback(
     async (asset: AssetDoc) => {
       const rawValue = stockInputs[asset._id] ?? "";
@@ -523,6 +623,7 @@ export default function Index() {
     [stockInputs]
   );
 
+  // Guarda ambos precios USDT juntos porque el backend tambien registra la vela USDTUSD.
   const saveUsdtPrices = async () => {
     if (
       !usdtBuyConfig ||
@@ -626,6 +727,7 @@ export default function Index() {
     }
   };
 
+  // Abre/cierra el flujo de alta de activos y resetea estados relacionados.
   const toggleAddAssetOptions = useCallback(() => {
     setShowAddAssetOptions(prev => {
       const next = !prev;
@@ -638,6 +740,7 @@ export default function Index() {
         setCryptoError(null);
         setStockError(null);
         setNewAssetDraft(null);
+        setWalletPercentageInputs({});
         setSavingNewAsset(false);
         setNewAssetError(null);
         setDeletingAsset(false);
@@ -653,6 +756,7 @@ export default function Index() {
     });
   }, []);
 
+  // Abre/cierra el flujo de borrado y lo mantiene separado del alta de activos.
   const toggleDeleteList = useCallback(() => {
     setShowDeleteList(prev => {
       const next = !prev;
@@ -661,6 +765,7 @@ export default function Index() {
         setShowCryptoSelector(false);
         setShowStockSelector(false);
         setNewAssetDraft(null);
+        setWalletPercentageInputs({});
         setSavingNewAsset(false);
         setNewAssetError(null);
         setDeletingAsset(false);
@@ -673,6 +778,7 @@ export default function Index() {
     });
   }, []);
 
+  // Descarga una sola vez los pares USDT disponibles en Binance.
   const loadCryptoPairs = useCallback(async () => {
     if (cryptoSymbols.length || cryptoLoading) {
       return;
@@ -700,6 +806,7 @@ export default function Index() {
     }
   }, [cryptoSymbols.length, cryptoLoading]);
 
+  // Muestra el selector de crypto y dispara la carga de pares si falta.
   const handleSelectCrypto = useCallback(() => {
     setShowCryptoSelector(true);
     setShowStockSelector(false);
@@ -710,9 +817,11 @@ export default function Index() {
     loadCryptoPairs();
   }, [loadCryptoPairs]);
 
+  // Guarda temporalmente el par elegido hasta que el usuario confirme.
   const handleSelectCryptoPair = useCallback(
     (symbol: string) => {
       setNewAssetDraft({ type: "crypto", symbol, exchange: "BINANCE" });
+      setWalletPercentageInputs(buildWalletPercentageInputs());
       setFeedback(`Par seleccionado: ${symbol}`);
       setNewAssetError(null);
       setSavingNewAsset(false);
@@ -721,9 +830,10 @@ export default function Index() {
       setShowAddAssetOptions(false);
       setCryptoSearch("");
     },
-    []
+    [buildWalletPercentageInputs]
   );
 
+  // Cierra el selector de crypto y limpia busqueda/errores del flujo.
   const handleCloseCryptoSelector = useCallback(() => {
     setShowCryptoSelector(false);
     setShowAddAssetOptions(false);
@@ -732,6 +842,7 @@ export default function Index() {
     setNewAssetError(null);
   }, []);
 
+  // Muestra el selector de acciones/ETFs.
   const handleSelectStock = useCallback(() => {
     setShowStockSelector(true);
     setShowCryptoSelector(false);
@@ -743,6 +854,7 @@ export default function Index() {
     setNewAssetError(null);
   }, []);
 
+  // Cierra el selector de acciones y descarta resultados de busqueda.
   const handleCloseStockSelector = useCallback(() => {
     setShowStockSelector(false);
     setShowAddAssetOptions(false);
@@ -754,6 +866,7 @@ export default function Index() {
     setNewAssetError(null);
   }, []);
 
+  // Guarda temporalmente la accion/ETF elegida hasta confirmar alta.
   const handleSelectStockSuggestion = useCallback((suggestion: StockSuggestion) => {
     setNewAssetDraft({
       type: "stock",
@@ -761,6 +874,7 @@ export default function Index() {
       exchange: "etoro",
       name: suggestion.name,
     });
+    setWalletPercentageInputs(buildWalletPercentageInputs());
     const displayName = suggestion.name
       ? `${suggestion.symbol} · ${suggestion.name}`
       : suggestion.symbol;
@@ -771,8 +885,9 @@ export default function Index() {
     setShowAddAssetOptions(false);
     setStockSearch("");
     setStockResults([]);
-  }, []);
+  }, [buildWalletPercentageInputs]);
 
+  // Borra el asset seleccionado y lo remueve del estado local.
   const handleDeleteAsset = useCallback(async () => {
     if (!selectedAssetId || deletingAsset) return;
     try {
@@ -794,18 +909,42 @@ export default function Index() {
     }
   }, [selectedAssetId, deletingAsset]);
 
+  // Crea un asset en backend y refresca la lista completa para traer datos calculados.
   const handleSaveNewAsset = useCallback(async () => {
     if (!newAssetDraft || savingNewAsset) return;
+
+    if (!isWalletPercentageTotalValid) {
+      setNewAssetError("La suma de porcentajes debe ser 100.");
+      return;
+    }
 
     try {
       setSavingNewAsset(true);
       setNewAssetError(null);
 
+      const newAssetPercentage = parseInput(walletPercentageInputs.__new_asset__ ?? "");
+      if (Number.isNaN(newAssetPercentage) || newAssetPercentage < 0 || newAssetPercentage > 100) {
+        throw new Error("Ingresa un porcentaje valido para el nuevo activo.");
+      }
+
+      const assetsAllocationPercentages = nonFiatAssets.map(asset => {
+        const allocationPercentage = parseInput(walletPercentageInputs[asset._id] ?? "");
+        if (Number.isNaN(allocationPercentage) || allocationPercentage < 0 || allocationPercentage > 100) {
+          throw new Error(`Ingresa un porcentaje valido para ${asset.symbol ?? "activo"}.`);
+        }
+        return {
+          _id: asset._id,
+          allocationPercentage: roundToEight(allocationPercentage),
+        };
+      });
+
       const payload: Record<string, unknown> = {
         symbol: newAssetDraft.symbol,
         type: newAssetDraft.type,
         initialInvestment: null,
-        currentBalance: totalBalance,
+        totalCapitalWhenLastAdded: totalBalance,
+        allocationPercentage: roundToEight(newAssetPercentage),
+        assets: assetsAllocationPercentages,
       };
 
       if (newAssetDraft.type === "crypto") {
@@ -828,6 +967,7 @@ export default function Index() {
 
       setFeedback(`Activo ${newAssetDraft.symbol} guardado correctamente.`);
       setNewAssetDraft(null);
+      setWalletPercentageInputs({});
       setShowAddAssetOptions(false);
     } catch (err) {
       console.error("❌ Error guardando nuevo activo:", err);
@@ -839,8 +979,16 @@ export default function Index() {
     } finally {
       setSavingNewAsset(false);
     }
-  }, [newAssetDraft, savingNewAsset, totalBalance]);
+  }, [
+    isWalletPercentageTotalValid,
+    newAssetDraft,
+    nonFiatAssets,
+    savingNewAsset,
+    totalBalance,
+    walletPercentageInputs,
+  ]);
 
+  // Busca acciones/ETFs en Yahoo con debounce y cancelacion de requests anteriores.
   useEffect(() => {
     if (!showStockSelector) {
       return;
@@ -908,6 +1056,7 @@ export default function Index() {
     };
   }, [stockSearch, showStockSelector]);
 
+  // Render principal: modales de seleccion arriba y formulario dentro del scroll.
   return (
     <>
       <Modal
@@ -1140,12 +1289,68 @@ export default function Index() {
                     ? ` · ${newAssetDraft.name}`
                     : ""}
                 </Text>
+                <View style={styles.walletAllocationList}>
+                  {walletPercentageRows.map(row => {
+                    const inputValue = walletPercentageInputs[row.key] ?? "";
+                    const parsedPercentage = parseInput(inputValue);
+                    const assignedCapital =
+                      Number.isNaN(parsedPercentage) || parsedPercentage < 0
+                        ? 0
+                        : (totalBalance * parsedPercentage) / 100;
+
+                    return (
+                      <View key={row.key} style={styles.walletAllocationRow}>
+                        <View style={styles.walletAllocationInfo}>
+                          <Text style={styles.walletAllocationSymbol}>
+                            {row.symbol}
+                            {row.isNew ? " (nuevo)" : ""}
+                          </Text>
+                          <Text style={styles.walletAllocationMeta}>
+                            {row.type.toUpperCase()} Â· ${assignedCapital.toFixed(2)}
+                          </Text>
+                        </View>
+                        <TextInput
+                          style={styles.walletAllocationInput}
+                          value={inputValue}
+                          onChangeText={value => handleWalletPercentageChange(row.key, value)}
+                          keyboardType="numeric"
+                          placeholder="%"
+                        />
+                      </View>
+                    );
+                  })}
+                </View>
+                <Text
+                  style={[
+                    styles.walletPercentageTotal,
+                    isWalletPercentageTotalValid
+                      ? styles.walletPercentageTotalValid
+                      : styles.walletPercentageTotalInvalid,
+                  ]}
+                >
+                  Suma: {walletPercentageTotal.toFixed(2)}%
+                </Text>
                 {newAssetError && <Text style={styles.errorText}>{newAssetError}</Text>}
-                <Button
-                  title={savingNewAsset ? "Guardando..." : "Guardar"}
+                <TouchableOpacity
+                  style={[
+                    styles.saveAllocationButton,
+                    canSaveNewAsset
+                      ? styles.saveAllocationButtonReady
+                      : styles.saveAllocationButtonDisabled,
+                  ]}
+                  activeOpacity={0.85}
                   onPress={handleSaveNewAsset}
-                  disabled={savingNewAsset}
-                />
+                  disabled={!canSaveNewAsset}
+                >
+                  <Text
+                    style={[
+                      styles.saveAllocationButtonText,
+                      !canSaveNewAsset && styles.saveAllocationButtonTextDisabled,
+                    ]}
+                  >
+                    {savingNewAsset ? "Guardando..." : "Guardar"}
+                  </Text>
+                </TouchableOpacity>
               </View>
             )}
 
@@ -1304,6 +1509,7 @@ export default function Index() {
   );
 }
 
+// Estilos locales de la pantalla. No contienen logica de negocio.
 const styles = StyleSheet.create({
   flex: {
     flex: 1,
@@ -1425,6 +1631,80 @@ const styles = StyleSheet.create({
   newAssetSymbol: {
     fontWeight: "700",
     color: "#0d47a1",
+  },
+  walletAllocationList: {
+    width: "100%",
+    gap: 8,
+  },
+  walletAllocationRow: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    borderWidth: 1,
+    borderColor: "#d0d8e5",
+    borderRadius: 10,
+    backgroundColor: "#ffffff",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  walletAllocationInfo: {
+    flex: 1,
+  },
+  walletAllocationSymbol: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#1f2933",
+  },
+  walletAllocationMeta: {
+    marginTop: 2,
+    fontSize: 13,
+    color: "#607d8b",
+  },
+  walletAllocationInput: {
+    width: 88,
+    borderWidth: 1,
+    borderColor: "#b0bec5",
+    borderRadius: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    textAlign: "right",
+    fontSize: 16,
+    backgroundColor: "#fff",
+  },
+  walletPercentageTotal: {
+    alignSelf: "flex-end",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  walletPercentageTotalValid: {
+    color: "#2e7d32",
+  },
+  walletPercentageTotalInvalid: {
+    color: "#c62828",
+  },
+  saveAllocationButton: {
+    minWidth: 140,
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  saveAllocationButtonReady: {
+    backgroundColor: "#2e7d32",
+  },
+  saveAllocationButtonDisabled: {
+    backgroundColor: "#b0bec5",
+  },
+  saveAllocationButtonText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  saveAllocationButtonTextDisabled: {
+    color: "#eef3f6",
   },
   modalBackdrop: {
     flex: 1,
@@ -1557,3 +1837,4 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 });
+

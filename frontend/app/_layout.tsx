@@ -1,14 +1,14 @@
-import { Drawer } from "expo-router/drawer";
+import { Tabs } from "expo-router";
 
 export default function Layout() {
   return (
-    <Drawer>
-      <Drawer.Screen name="index" options={{ title: "Inicio" }} />
-      <Drawer.Screen name="balances" options={{ title: "Balances" }} />
-      <Drawer.Screen name="transacciones" options={{ title: "Transacciones" }} />
-      <Drawer.Screen name="historico" options={{ title: "Histórico" }} />
-      <Drawer.Screen name="inversiones" options={{ title: "Inversiones" }} />
-      <Drawer.Screen name="prediccion" options={{ title: "Predicción" }} />
-    </Drawer>
+    <Tabs>
+      <Tabs.Screen name="index" options={{ title: "Inicio" }} />
+      <Tabs.Screen name="balances" options={{ title: "Balances" }} />
+      <Tabs.Screen name="transacciones" options={{ title: "Transacciones" }} />
+      <Tabs.Screen name="historico" options={{ title: "Histórico" }} />
+      <Tabs.Screen name="inversiones" options={{ title: "Inversiones" }} />
+      <Tabs.Screen name="prediccion" options={{ title: "Predicción" }} />
+    </Tabs>
   );
 }

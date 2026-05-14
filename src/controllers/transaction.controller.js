@@ -157,6 +157,57 @@ async function convertFeeToUsd(amount, currency, cache = {}) {
   return Number(amount.toFixed(8));
 }
 
+async function normalizeFeeParts(fees, fallbackAmount, fallbackCurrency = "USD") {
+  const conversionCache = {};
+  const normalizedFees = [];
+
+  if (Array.isArray(fees)) {
+    for (const feePart of fees) {
+      const amount = Number(feePart?.amount ?? 0);
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+
+      const currency =
+        typeof feePart?.currency === "string" && feePart.currency.trim().length > 0
+          ? feePart.currency.trim().toUpperCase()
+          : "USD";
+      const usdValue = await convertFeeToUsd(amount, currency, conversionCache);
+      normalizedFees.push({ amount, currency, usdValue });
+    }
+  } else {
+    const amount = Number(fallbackAmount ?? 0);
+    const normalizedAmount = Number.isFinite(amount) && amount > 0 ? amount : 0;
+    const currency =
+      typeof fallbackCurrency === "string" && fallbackCurrency.trim().length > 0
+        ? fallbackCurrency.trim().toUpperCase()
+        : "USD";
+
+    if (normalizedAmount > 0) {
+      normalizedFees.push({
+        amount: normalizedAmount,
+        currency,
+        usdValue: await convertFeeToUsd(normalizedAmount, currency, conversionCache),
+      });
+    }
+  }
+
+  const totalUsd = Number(
+    normalizedFees.reduce((sum, fee) => sum + (Number(fee.usdValue) || 0), 0).toFixed(8)
+  );
+
+  return { normalizedFees, totalUsd };
+}
+
+function splitFeeParts(fees, proportion) {
+  if (!Array.isArray(fees) || !Number.isFinite(proportion) || proportion <= 0) return [];
+  return fees
+    .map(fee => ({
+      amount: Number(((Number(fee.amount) || 0) * proportion).toFixed(8)),
+      currency: fee.currency,
+      usdValue: Number(((Number(fee.usdValue) || 0) * proportion).toFixed(8)),
+    }))
+    .filter(fee => fee.amount > 0 || fee.usdValue > 0);
+}
+
 /**
  * Helper: calcula profit % y total en fiat
  * Para LONG: ganancia = closeValue - openValue (compraste barato, vendiste caro)
@@ -208,21 +259,18 @@ export async function createTransaction(req, res) {
       openValueFiat,
       openFee,
       openFeeCurrency,
+      openFees,
     } = req.body;
 
     const normalizedAmount = amount ?? quantity;
     const parsedPrice = Number(openPrice);
     const parsedAmount = Number(normalizedAmount);
     const parsedOpenValue = Number(openValueFiat);
-    const rawFee = Number(openFee ?? 0);
-    const normalizedFee = Number.isFinite(rawFee) && rawFee > 0 ? rawFee : 0;
-    const feeCurrencyCode =
-      typeof openFeeCurrency === "string" && openFeeCurrency.trim().length > 0
-        ? openFeeCurrency.trim().toUpperCase()
-        : "USD";
-    const feeConversionCache = {};
-    const convertedOpenFee =
-      normalizedFee > 0 ? await convertFeeToUsd(normalizedFee, feeCurrencyCode, feeConversionCache) : 0;
+    const { normalizedFees: normalizedOpenFees, totalUsd: convertedOpenFee } = await normalizeFeeParts(
+      openFees,
+      openFee,
+      openFeeCurrency
+    );
     const openDateValue = openDate ? new Date(openDate) : new Date();
     const normalizedFiatCurrency =
       typeof fiatCurrency === "string" && fiatCurrency.trim().length > 0
@@ -256,6 +304,7 @@ export async function createTransaction(req, res) {
       amount: parsedAmount,
       openValueFiat: parsedOpenValue,
       openFee: convertedOpenFee,
+      openFees: normalizedOpenFees,
       status: "open",
     });
 
@@ -317,17 +366,11 @@ export async function closeTransaction(req, res) {
     const closeDateValue = req.body.closeDate ? new Date(req.body.closeDate) : new Date();
     const closePrice = Number(req.body.closePrice);
     const closeValueFiat = Number(req.body.closeValueFiat);
-    const rawCloseFee = Number(req.body.closeFee ?? 0);
-    const normalizedCloseFee = Number.isFinite(rawCloseFee) && rawCloseFee > 0 ? rawCloseFee : 0;
-    const closeFeeCurrency =
-      typeof req.body.closeFeeCurrency === "string" && req.body.closeFeeCurrency.trim().length > 0
-        ? req.body.closeFeeCurrency.trim().toUpperCase()
-        : "USD";
-    const closeFeeConversionCache = {};
-    const closeFee =
-      normalizedCloseFee > 0
-        ? await convertFeeToUsd(normalizedCloseFee, closeFeeCurrency, closeFeeConversionCache)
-        : 0;
+    const { normalizedFees: normalizedCloseFees, totalUsd: closeFee } = await normalizeFeeParts(
+      req.body.closeFees,
+      req.body.closeFee,
+      req.body.closeFeeCurrency
+    );
 
     if (!Number.isFinite(closePrice) || closePrice <= 0) {
       return res.status(400).json({ error: "closePrice debe ser un número válido" });
@@ -349,6 +392,8 @@ export async function closeTransaction(req, res) {
       const proportion = closeAmount / tx.amount;
       const closedOpenValue = Number((tx.openValueFiat * proportion).toFixed(8));
       const closedOpenFee = Number(((tx.openFee || 0) * proportion).toFixed(8));
+      const closedOpenFees = splitFeeParts(tx.openFees, proportion);
+      const remainingOpenFees = splitFeeParts(tx.openFees, 1 - proportion);
 
       const closedTx = new Transaction({
         asset: tx.asset,
@@ -359,10 +404,12 @@ export async function closeTransaction(req, res) {
         amount: Number(closeAmount.toFixed(8)),
         openValueFiat: closedOpenValue,
         openFee: closedOpenFee,
+        openFees: closedOpenFees,
         closeDate: closeDateValue,
         closePrice: closePrice,
         closeValueFiat: computedCloseValueFiat,
         closeFee: closeFee,
+        closeFees: normalizedCloseFees,
         status: "closed",
       });
 
@@ -374,6 +421,7 @@ export async function closeTransaction(req, res) {
       tx.amount = Number((tx.amount - closeAmount).toFixed(8));
       tx.openValueFiat = Number((tx.openValueFiat - closedOpenValue).toFixed(8));
       tx.openFee = Number(((tx.openFee || 0) - closedOpenFee).toFixed(8));
+      tx.openFees = remainingOpenFees;
       await tx.save();
 
       // Apply balance adjustments only for the closed portion (closedTx)
@@ -433,6 +481,7 @@ export async function closeTransaction(req, res) {
     tx.closePrice = closePrice;
     tx.closeValueFiat = computedCloseValueFiat;
     tx.closeFee = closeFee;
+    tx.closeFees = normalizedCloseFees;
 
     tx.status = "closed";
 

@@ -5,6 +5,24 @@ import ConfigInfo from "../models/configInfo.model.js";
 import { getCandlesWithStats } from "../scripts/fetchHistoricalMaxMin.js";
 import { calculateSlope } from "../scripts/linearRegression.js";
 
+const roundToEight = value => Number(Number(value).toFixed(8));
+
+const calculateCapitalFromPercentage = (percentage, total) => {
+  const parsedPercentage = Number(percentage);
+  const parsedTotal = Number(total);
+
+  if (
+    !Number.isFinite(parsedPercentage) ||
+    !Number.isFinite(parsedTotal) ||
+    parsedPercentage < 0 ||
+    parsedTotal <= 0
+  ) {
+    return 0;
+  }
+
+  return roundToEight((parsedTotal * parsedPercentage) / 100);
+};
+
 // GET /assets
 export const getAssets = async (req, res) => {
   try {
@@ -19,30 +37,110 @@ export const getAssets = async (req, res) => {
 // 📌 Crear un nuevo Asset junto con su historial de cierres
 export const createAsset = async (req, res) => {
   try {
-    const { symbol, exchange, initialInvestment, type, currentBalance } = req.body;
+    const {
+      symbol,
+      exchange,
+      initialInvestment,
+      type,
+      totalCapitalWhenLastAdded,
+      allocationPercentage,
+      assets: assetsAllocationPercentages = [],
+    } = req.body;
 
     const exchangeDoc = await Exchange.findOne({ name: exchange });
     if (!exchangeDoc) {
       return res.status(404).json({ error: "Exchange no encontrado" });
     }
 
-    const parsedCurrentBalance = Number(currentBalance);
-    if (!Number.isFinite(parsedCurrentBalance) || parsedCurrentBalance < 0) {
-      return res.status(400).json({ error: "currentBalance inválido" });
+    const parsedTotalCapitalWhenLastAdded = Number(totalCapitalWhenLastAdded);
+    if (!Number.isFinite(parsedTotalCapitalWhenLastAdded) || parsedTotalCapitalWhenLastAdded < 0) {
+      return res.status(400).json({ error: "totalCapitalWhenLastAdded invalido" });
     }
 
-    const { candles, high, low } = await getCandlesWithStats(symbol, 7, type);
+    const parsedAllocationPercentage = Number(allocationPercentage);
+    if (
+      type !== "fiat" &&
+      (!Number.isFinite(parsedAllocationPercentage) ||
+        parsedAllocationPercentage < 0 ||
+        parsedAllocationPercentage > 100)
+    ) {
+      return res.status(400).json({ error: "allocationPercentage debe ser un numero entre 0 y 100" });
+    }
+
+    if (!Array.isArray(assetsAllocationPercentages)) {
+      return res.status(400).json({ error: "assets debe ser un arreglo" });
+    }
+
+    const nonFiatAssets = await Asset.find({ type: { $ne: "fiat" } });
+    const percentageByAssetId = new Map();
+    const existingAssetIds = new Set(nonFiatAssets.map(asset => asset._id.toString()));
+
+    for (const assetAllocation of assetsAllocationPercentages) {
+      const assetId = assetAllocation?._id;
+      const parsedPercentage = Number(assetAllocation?.allocationPercentage);
+
+      if (!assetId) {
+        return res.status(400).json({ error: "Cada asset debe incluir _id" });
+      }
+
+      if (!existingAssetIds.has(assetId.toString())) {
+        return res.status(400).json({ error: "La lista contiene un asset invalido" });
+      }
+
+      if (!Number.isFinite(parsedPercentage) || parsedPercentage < 0 || parsedPercentage > 100) {
+        return res.status(400).json({ error: "Cada porcentaje debe estar entre 0 y 100" });
+      }
+
+      percentageByAssetId.set(assetId.toString(), roundToEight(parsedPercentage));
+    }
+
+    for (const existingAsset of nonFiatAssets) {
+      if (!percentageByAssetId.has(existingAsset._id.toString())) {
+        return res.status(400).json({
+          error: `Falta porcentaje para el activo ${existingAsset.symbol}`,
+        });
+      }
+    }
+
+    const existingPercentageTotal = Array.from(percentageByAssetId.values()).reduce(
+      (sum, value) => sum + value,
+      0
+    );
+    const percentageTotal = roundToEight(
+      existingPercentageTotal + (type === "fiat" ? 0 : parsedAllocationPercentage)
+    );
+
+    if (Math.abs(percentageTotal - 100) > 0.000001) {
+      return res.status(400).json({ error: "La suma de porcentajes debe ser 100" });
+    }
+
+    const { candles, high, low, details } = await getCandlesWithStats(symbol, 7, type);
+
+    const newAssetAllocationPercentage =
+      type === "fiat" ? 0 : roundToEight(parsedAllocationPercentage);
+    const newAssetTotalCapitalWhenLastAdded =
+      type === "fiat"
+        ? 0
+        : calculateCapitalFromPercentage(
+            newAssetAllocationPercentage,
+            parsedTotalCapitalWhenLastAdded
+          );
 
     const asset = new Asset({
       symbol,
       exchange: exchangeDoc._id,
       initialInvestment,
-      maxPriceSevenYear: high,
-      minPriceSevenYear: low,
+      high,
+      low,
+      priceRangeSevenYearDetails: details,
       slope: null,
-      totalCapitalWhenLastAdded: 200,
       type,
     });
+
+    if (type !== "fiat") {
+      asset.allocationPercentage = newAssetAllocationPercentage;
+      asset.totalCapitalWhenLastAdded = newAssetTotalCapitalWhenLastAdded;
+    }
 
     await asset.save();
 
@@ -70,28 +168,21 @@ export const createAsset = async (req, res) => {
     asset.slope = slope;
     await asset.save();
 
-    const nonFiatAssets = await Asset.find({ _id: { $ne: asset._id }, type: { $ne: "fiat" } });
-    const totalOtherCapitals = nonFiatAssets.reduce(
-      (sum, doc) => sum + (Number(doc.totalCapitalWhenLastAdded) || 0),
-      0
-    );
-
-    const newAssetCapital = 200;
-    const amountToSplit = parsedCurrentBalance - totalOtherCapitals;
-    const divisor = nonFiatAssets.length;
-    const adjustment = divisor > 0 ? (amountToSplit - newAssetCapital) / divisor : 0;
-
     await Promise.all(
       nonFiatAssets.map(async other => {
-        const currentValue = Number(other.totalCapitalWhenLastAdded) || 0;
-        other.totalCapitalWhenLastAdded = currentValue + adjustment;
+        const updatedPercentage = percentageByAssetId.get(other._id.toString());
+        other.allocationPercentage = updatedPercentage;
+        other.totalCapitalWhenLastAdded = calculateCapitalFromPercentage(
+          updatedPercentage,
+          parsedTotalCapitalWhenLastAdded
+        );
         await other.save();
       })
     );
 
     await ConfigInfo.findOneAndUpdate(
       { name: "TotalUltimoActivoCreado" },
-      { total: parsedCurrentBalance },
+      { total: parsedTotalCapitalWhenLastAdded },
       { upsert: true, new: true }
     );
 
@@ -165,38 +256,56 @@ export const putAssets = async (req, res) => {
       }
     }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "minPriceSevenYear")) {
-      const value = req.body.minPriceSevenYear;
+    if (Object.prototype.hasOwnProperty.call(req.body, "low")) {
+      const value = req.body.low;
       const parsed = Number(value);
       if (!Number.isFinite(parsed) || parsed < 0) {
         return res
           .status(400)
-          .json({ error: "minPriceSevenYear debe ser un número válido mayor o igual a 0" });
+          .json({ error: "low debe ser un numero valido mayor o igual a 0" });
       }
-      asset.minPriceSevenYear = parsed;
+      asset.low = parsed;
       hasUpdates = true;
     }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "maxPriceSevenYear")) {
-      const value = req.body.maxPriceSevenYear;
+    if (Object.prototype.hasOwnProperty.call(req.body, "high")) {
+      const value = req.body.high;
       const parsed = Number(value);
       if (!Number.isFinite(parsed) || parsed <= 0) {
         return res
           .status(400)
-          .json({ error: "maxPriceSevenYear debe ser un número válido mayor a 0" });
+          .json({ error: "high debe ser un numero valido mayor a 0" });
       }
-      asset.maxPriceSevenYear = parsed;
+      asset.high = parsed;
+      hasUpdates = true;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "allocationPercentage")) {
+      if (asset.type === "fiat") {
+        return res
+          .status(400)
+          .json({ error: "allocationPercentage no aplica para assets fiat" });
+      }
+
+      const value = req.body.allocationPercentage;
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+        return res
+          .status(400)
+          .json({ error: "allocationPercentage debe ser un numero entre 0 y 100" });
+      }
+      asset.allocationPercentage = Number(parsed.toFixed(8));
       hasUpdates = true;
     }
 
     if (
-      asset.minPriceSevenYear != null &&
-      asset.maxPriceSevenYear != null &&
-      asset.minPriceSevenYear > asset.maxPriceSevenYear
+      asset.low != null &&
+      asset.high != null &&
+      asset.low > asset.high
     ) {
       return res
         .status(400)
-        .json({ error: "minPriceSevenYear no puede ser mayor que maxPriceSevenYear" });
+        .json({ error: "low no puede ser mayor que high" });
     }
 
     if (!hasUpdates) {
@@ -213,3 +322,4 @@ export const putAssets = async (req, res) => {
     return res.status(500).json({ error: "No se pudo actualizar el asset" });
   }
 };
+
