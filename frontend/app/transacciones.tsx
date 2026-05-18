@@ -447,11 +447,7 @@ const adjustOperationForClosings = (
     };
 
     const plan = buildClosurePlan(op, openPositions.longs, "sell");
-    // Si no hay cierres rentables y el slope es negativo, permitir abrir short igualmente
-    if (!plan) {
-      if ((op.slopeSign ?? 0) < 0) return op;
-      return null;
-    }
+    if (!plan) return null;
 
     const roundedBase = Number(plan.baseUsed.toFixed(8));
     const quoteUpper = quoteUpperGlobal;
@@ -468,7 +464,12 @@ const adjustOperationForClosings = (
         ? -roundedBase
         : -(roundedBase * op.price);
 
-    const residualBase = Math.max(0, Number((totalBaseNeededRounded - roundedBase).toFixed(8)));
+    const totalOpenLongBase = openPositions.longs.reduce((sum, position) => sum + Math.max(position.amount, 0), 0);
+    const remainingLongBase = Math.max(0, Number((totalOpenLongBase - roundedBase).toFixed(8)));
+    const residualBase =
+      remainingLongBase <= BASE_TOLERANCE
+        ? Math.max(0, Number((totalBaseNeededRounded - roundedBase).toFixed(8)))
+        : 0;
     const residualFiat = Number(residualBase > 0 ? computeFiatValue(residualBase).toFixed(quoteDec) : "0");
     if (residualBase > BASE_TOLERANCE) {
       const residualLabel = formatAssetAmount(residualBase, op.baseAsset);
@@ -517,11 +518,7 @@ const adjustOperationForClosings = (
     };
 
     const plan = buildClosurePlan(op, openPositions.shorts, "buy");
-    // Si no hay cierres rentables y el slope es positivo, permitir abrir long igualmente
-    if (!plan) {
-      if ((op.slopeSign ?? 0) > 0) return op;
-      return null;
-    }
+    if (!plan) return null;
 
     const roundedBase = Number(plan.baseUsed.toFixed(8));
     const quoteUpper2 = quoteUpperGlobal;
@@ -538,7 +535,12 @@ const adjustOperationForClosings = (
         ? roundedBase
         : roundedBase * op.price;
 
-    const residualBase = Math.max(0, Number((totalBaseNeededRounded - roundedBase).toFixed(8)));
+    const totalOpenShortBase = openPositions.shorts.reduce((sum, position) => sum + Math.max(position.amount, 0), 0);
+    const remainingShortBase = Math.max(0, Number((totalOpenShortBase - roundedBase).toFixed(8)));
+    const residualBase =
+      remainingShortBase <= BASE_TOLERANCE
+        ? Math.max(0, Number((totalBaseNeededRounded - roundedBase).toFixed(8)))
+        : 0;
     const residualFiat = Number(residualBase > 0 ? computeFiatValue(residualBase).toFixed(quoteDec) : "0");
     if (residualBase > BASE_TOLERANCE) {
       const residualLabel = formatAssetAmount(residualBase, op.baseAsset);

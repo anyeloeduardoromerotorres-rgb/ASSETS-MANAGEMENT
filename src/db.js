@@ -9,7 +9,9 @@ export const connectdb = async () => {
       throw new Error("La variable de entorno BD no esta definida");
     }
 
-    await mongoose.connect(process.env.BD);
+    await mongoose.connect(process.env.BD, {
+      serverSelectionTimeoutMS: 10000,
+    });
     console.log(
       `[db] Conectado a MongoDB: ${mongoose.connection.name} (${mongoose.connection.host})`
     );
