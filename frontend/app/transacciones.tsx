@@ -242,6 +242,22 @@ const isBinanceExchangeValue = (value: unknown) => {
 
 const BASE_TOLERANCE = 1e-8; // Margen para cantidades base al comparar flotantes
 const PROFIT_TOLERANCE = 1e-6; // Margen para validar ganancias / cierres
+const REBALANCED_ASSET_TYPES = new Set(["crypto", "stock", "commodity"]);
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+const isRebalancedAsset = (asset: AssetDocument) =>
+  REBALANCED_ASSET_TYPES.has(String(asset.type)) &&
+  isFiniteNumber(asset.totalCapitalWhenLastAdded) &&
+  asset.totalCapitalWhenLastAdded > 0 &&
+  isFiniteNumber(asset.high) &&
+  asset.high > 0 &&
+  isFiniteNumber(asset.low) &&
+  asset.low >= 0;
+
+const isManagedFiatPair = (asset: AssetDocument) =>
+  asset.type === "fiat" && (asset.symbol === "USDTUSD" || asset.symbol === "USDPEN");
 
 const toNumber = (value: unknown, fallback = 0) => {
   // Convierte valores potencialmente nulos o strings a number, usando fallback si no es finito.
@@ -622,9 +638,9 @@ export default function TransaccionesScreen() {
 
         // Filtramos assets para separar los que son pares fiat útiles en la pantalla.
         const allAssets = assetsRes.data || [];
-        const nonFiatAssets = allAssets.filter(asset => asset.type !== "fiat");
-        const fiatPairs = allAssets.filter(asset => asset.symbol === "USDTUSD" || asset.symbol === "USDPEN");
-        const assets = [...nonFiatAssets, ...fiatPairs];
+        const rebalancedAssets = allAssets.filter(isRebalancedAsset);
+        const fiatPairs = allAssets.filter(isManagedFiatPair);
+        const assets = [...rebalancedAssets, ...fiatPairs];
         setAssetOptions(assets);
 
         // Normalización de balances de Binance y totales agregados.
@@ -705,7 +721,7 @@ export default function TransaccionesScreen() {
       openPositionsByAssetRef.current = openTransactionsByAsset;
 
       // Traemos precios externos para assets que no son crypto (acciones, commodities, etc.).
-      const nonCryptoAssets = allAssets.filter(asset => asset.type !== "crypto");
+      const nonCryptoAssets = rebalancedAssets.filter(asset => asset.type !== "crypto");
       const otherAssetPricesEntries = await Promise.all(
         nonCryptoAssets.map(async asset => {
           const price = await fetchExternalAssetPrice(
@@ -733,7 +749,11 @@ export default function TransaccionesScreen() {
       });
 
       const externalValueMap = new Map<string, number>();
+      const externalAmountMap = new Map<string, number>();
       externalHoldingsInfo.forEach(info => {
+        if (info.amount != null) {
+          externalAmountMap.set(info.symbol, info.amount);
+        }
         if (info.usdValue != null) {
           externalValueMap.set(info.symbol, info.usdValue);
         }
@@ -755,7 +775,7 @@ export default function TransaccionesScreen() {
           usdValue: info.usdValue as number,
         }));
 
-      const designatedTotal = nonFiatAssets.reduce(
+      const designatedTotal = rebalancedAssets.reduce(
         (acc, asset) => acc + (asset.totalCapitalWhenLastAdded ?? 0),
         0
       );
@@ -783,8 +803,8 @@ export default function TransaccionesScreen() {
       const ALLOCATION_EPSILON = 1e-6;
       const POSITIVE_BUFFER = 200; // Evita reajustar por excedentes pequeños
 
-      if (nonFiatAssets.length > 0) {
-        const allocations = nonFiatAssets.map(asset => ({
+      if (rebalancedAssets.length > 0) {
+        const allocations = rebalancedAssets.map(asset => ({
           asset,
           allocation: Math.max(asset.totalCapitalWhenLastAdded ?? 0, 0),
         }));
@@ -903,6 +923,7 @@ export default function TransaccionesScreen() {
         }
 
         const stockHoldingValue = externalValueMap.get(asset.symbol) ?? 0;
+        const stockHoldingAmount = externalAmountMap.get(asset.symbol) ?? 0;
         // Datos actuales de tenencia para el activo base y la contraparte quote.
         const baseHolding = getHoldingData(
           baseAsset,
@@ -910,7 +931,8 @@ export default function TransaccionesScreen() {
           totals,
           penToUsd,
           lastPriceUsdtSell,
-          stockHoldingValue
+          stockHoldingValue,
+          stockHoldingAmount
         );
         const quoteHolding = getHoldingData(
           quoteAsset,
@@ -986,36 +1008,12 @@ export default function TransaccionesScreen() {
           let baseShare = 1 - normalized;
           baseShare = clamp(baseShare, 0, 1);
           const desiredBaseUsd = allocation * baseShare;
+          let targetBaseUsd = clamp(desiredBaseUsd, 0, maxBaseAllowed);
 
-          let targetBaseCandidate = desiredBaseUsd;
-          const rawBaseDiff = desiredBaseUsd - actualBaseUsd;
-          const rawSellUsd = rawBaseDiff < 0 ? -rawBaseDiff : 0;
-
-          if (baseHoldUsd > 0) {
-            const availableExcess = Math.max(0, actualBaseUsd - baseHoldUsd);
-            if (rawSellUsd > 0) {
-              if (rawSellUsd < baseHoldUsd || availableExcess <= BASE_TOLERANCE) {
-                targetBaseCandidate = actualBaseUsd; // no venta, proteger reserva
-              } else {
-                const sellFinal = Math.min(rawSellUsd - baseHoldUsd, availableExcess);
-                targetBaseCandidate = actualBaseUsd - sellFinal;
-              }
-            }
+          if (targetBaseUsd < actualBaseUsd && baseHoldUsd > 0) {
+            const protectedBaseUsd = Math.min(baseHoldUsd, actualBaseUsd);
+            targetBaseUsd = Math.max(targetBaseUsd, protectedBaseUsd);
           }
-
-
-          const adjustedDesiredBaseUsd = clamp(targetBaseCandidate, 0, maxBaseAllowed);
-
-          let targetBaseUsd: number;
-          if (actualBaseUsd < adjustedDesiredBaseUsd) {
-            targetBaseUsd = Math.min(adjustedDesiredBaseUsd, maxBaseAllowed);
-          } else {
-            const minimumAfterSell = Math.max(adjustedDesiredBaseUsd, baseHoldUsd);
-            const cappedMinimum = clamp(minimumAfterSell, 0, maxBaseAllowed);
-            targetBaseUsd = actualBaseUsd > cappedMinimum ? cappedMinimum : actualBaseUsd;
-          }
-
-          targetBaseUsd = clamp(targetBaseUsd, 0, maxBaseAllowed);
 
           let targetQuoteUsd = allocation - targetBaseUsd;
           if (targetQuoteUsd < quoteHoldUsd) {
@@ -1203,35 +1201,12 @@ export default function TransaccionesScreen() {
       const normalized = priceRange === 0 ? 0.5 : clamp((price - min) / priceRange, 0, 1);
       let baseShare = clamp(1 - normalized, 0, 1);
       const desiredBaseUsd = allocation * baseShare;
+      let targetBaseUsd = clamp(desiredBaseUsd, 0, maxBaseAllowed);
 
-      let targetBaseCandidate = desiredBaseUsd;
-      const rawBaseDiff = desiredBaseUsd - actualBaseUsd;
-      const rawSellUsd = rawBaseDiff < 0 ? -rawBaseDiff : 0;
-
-      if (baseHoldUsd > 0) {
-        const availableExcess = Math.max(0, actualBaseUsd - baseHoldUsd);
-        if (rawSellUsd > 0) {
-          if (rawSellUsd < baseHoldUsd || availableExcess <= BASE_TOLERANCE) {
-            targetBaseCandidate = actualBaseUsd;
-          } else {
-            const sellFinal = Math.min(rawSellUsd - baseHoldUsd, availableExcess);
-            targetBaseCandidate = actualBaseUsd - sellFinal;
-          }
-        }
+      if (targetBaseUsd < actualBaseUsd && baseHoldUsd > 0) {
+        const protectedBaseUsd = Math.min(baseHoldUsd, actualBaseUsd);
+        targetBaseUsd = Math.max(targetBaseUsd, protectedBaseUsd);
       }
-
-      const adjustedDesiredBaseUsd = clamp(targetBaseCandidate, 0, maxBaseAllowed);
-
-      let targetBaseUsd: number;
-      if (actualBaseUsd < adjustedDesiredBaseUsd) {
-        targetBaseUsd = Math.min(adjustedDesiredBaseUsd, maxBaseAllowed);
-      } else {
-        const minimumAfterSell = Math.max(adjustedDesiredBaseUsd, baseHoldUsd);
-        const cappedMinimum = clamp(minimumAfterSell, 0, maxBaseAllowed);
-        targetBaseUsd = actualBaseUsd > cappedMinimum ? cappedMinimum : actualBaseUsd;
-      }
-
-      targetBaseUsd = clamp(targetBaseUsd, 0, maxBaseAllowed);
 
       let targetQuoteUsd = allocation - targetBaseUsd;
       if (targetQuoteUsd < quoteHoldUsd) {
@@ -2640,7 +2615,8 @@ function getHoldingData(
   totals: { usd: number; pen: number },
   penToUsd: number,
   lastPriceUsdtSell: number,
-  fallbackUsdValue = 0
+  fallbackUsdValue = 0,
+  fallbackAmount = 0
 ): { amount: number; usdValue: number } {
   if (asset === "USD") {
     return { amount: totals.usd ?? 0, usdValue: totals.usd ?? 0 };
@@ -2663,8 +2639,8 @@ function getHoldingData(
     return { amount: balance.total, usdValue: balance.usdValue };
   }
 
-  if (fallbackUsdValue) {
-    return { amount: 0, usdValue: fallbackUsdValue };
+  if (fallbackUsdValue || fallbackAmount) {
+    return { amount: fallbackAmount, usdValue: fallbackUsdValue };
   }
 
   return { amount: 0, usdValue: 0 };
