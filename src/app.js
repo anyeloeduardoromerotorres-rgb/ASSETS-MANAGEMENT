@@ -9,6 +9,7 @@ import quoteRoutes from "./routes/quote.route.js";
 import binanceRoutes from "./routes/binance.routes.js";
 import configInfoRoutes from "./routes/configInfo.route.js";
 import transactionRoutes from "./routes/transaction.route.js";
+import capitalHistoryRoutes from "./routes/capitalHistory.route.js";
 
 const app = express();
 
@@ -36,6 +37,7 @@ app.get("/health", (_req, res) => {
 
 
 app.use("/api", configInfoRoutes);
+app.use("/api", capitalHistoryRoutes);
 app.use('/api', depositeWithdrawalRoute)
 app.use('/api', asset)
 app.use('/api', exchange)

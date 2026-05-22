@@ -6,6 +6,7 @@ import cron from "node-cron";
 import mongoose from "mongoose";
 import Asset from "./models/asset.model.js";
 import { updateAssetCandles } from "./scripts/updateAssets.js";
+import { saveCurrentCapitalSnapshot } from "./services/capitalHistory.service.js";
 
 dotenv.config();
 
@@ -61,10 +62,31 @@ async function updateAllAssetCandles(reason) {
   }
 }
 
+async function snapshotDailyCapital(reason) {
+  try {
+    const snapshot = await saveCurrentCapitalSnapshot({ reason });
+    console.log(
+      `[capital] Snapshot ${snapshot.dateKey}: $${Number(snapshot.totalUsd).toFixed(2)} (${reason})`
+    );
+  } catch (err) {
+    console.error(`[capital] Error guardando snapshot (${reason}):`, err.message);
+  }
+}
+
 // Se ejecuta una vez cuando inicia el servidor.
 updateAllAssetCandles("startup");
+snapshotDailyCapital("startup");
 
 // Se ejecuta todos los dias a las 00:10 UTC, despues del cierre de la vela diaria.
 cron.schedule("10 0 * * *", () => {
   updateAllAssetCandles("cron diario");
 });
+
+// Se ejecuta todos los dias a las 00:05 hora Lima para guardar el capital actual.
+cron.schedule(
+  "5 0 * * *",
+  () => {
+    snapshotDailyCapital("cron diario");
+  },
+  { timezone: "America/Lima" }
+);

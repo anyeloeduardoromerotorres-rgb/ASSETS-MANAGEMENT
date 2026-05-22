@@ -1,4 +1,4 @@
-import axios from "axios";
+import { create } from "axios";
 import Constants from "expo-constants";
 import { Platform } from "react-native";
 
@@ -6,19 +6,37 @@ const PRODUCTION_API_URL =
   process.env.EXPO_PUBLIC_API_URL ?? "https://hbsjajakwksnsj.duckdns.org/api";
 const LOCAL_API_PORT = 3000;
 
+function getExpoHost() {
+  const hostUri =
+    Constants.expoConfig?.hostUri ??
+    Constants.manifest2?.extra?.expoGo?.debuggerHost;
+
+  return hostUri?.split(":")[0];
+}
+
 function getDevApiBaseUrl() {
   if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL;
+    const configuredUrl = process.env.EXPO_PUBLIC_API_URL;
+
+    if (Platform.OS !== "web" && configuredUrl.includes("localhost")) {
+      const host = getExpoHost();
+      if (host) {
+        return configuredUrl.replace("localhost", host);
+      }
+
+      if (Platform.OS === "android") {
+        return configuredUrl.replace("localhost", "10.0.2.2");
+      }
+    }
+
+    return configuredUrl;
   }
 
   if (Platform.OS === "web") {
     return `http://localhost:${LOCAL_API_PORT}/api`;
   }
 
-  const hostUri =
-    Constants.expoConfig?.hostUri ??
-    Constants.manifest2?.extra?.expoGo?.debuggerHost;
-  const host = hostUri?.split(":")[0];
+  const host = getExpoHost();
 
   if (host) {
     return `http://${host}:${LOCAL_API_PORT}/api`;
@@ -33,7 +51,7 @@ function getDevApiBaseUrl() {
 
 const API_BASE_URL = __DEV__ ? getDevApiBaseUrl() : PRODUCTION_API_URL;
 
-const api = axios.create({
+const api = create({
   baseURL: API_BASE_URL,
   headers: {
     "Content-Type": "application/json",

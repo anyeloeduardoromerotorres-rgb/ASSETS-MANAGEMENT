@@ -1,6 +1,6 @@
 // app/prediccion.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, ActivityIndicator, StyleSheet, ScrollView, TextInput, TouchableOpacity } from "react-native";
+import { View, Text, ActivityIndicator, StyleSheet, ScrollView, TextInput, TouchableOpacity, useWindowDimensions } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import api from "../constants/api";
 import { CONFIG_INFO_INITIAL_ID } from "../constants/config";
@@ -37,6 +37,273 @@ type ProjectionResult =
   | { status: "invalid" }
   | { status: "negative" };
 
+type CapitalSnapshot = {
+  _id?: string;
+  dateKey: string;
+  date?: string;
+  totalUsd: number;
+  source?: "frontend" | "server";
+};
+
+type PeriodKey = "1d" | "1w" | "1m" | "1y" | "5y" | "all";
+
+type GainPeriod = {
+  key: PeriodKey;
+  label: string;
+  shortLabel: string;
+  days: number | null;
+};
+
+type ChartPoint = CapitalSnapshot & {
+  time: number;
+};
+
+type PeriodGain = {
+  period: GainPeriod;
+  startSnapshot: ChartPoint | null;
+  endSnapshot: ChartPoint | null;
+  gain: number;
+  gainPct: number | null;
+  points: ChartPoint[];
+};
+
+const GAIN_PERIODS: GainPeriod[] = [
+  { key: "1d", label: "Un dia", shortLabel: "1D", days: 1 },
+  { key: "1w", label: "Una semana", shortLabel: "1S", days: 7 },
+  { key: "1m", label: "Un mes", shortLabel: "1M", days: 30 },
+  { key: "1y", label: "Un ano", shortLabel: "1A", days: 365 },
+  { key: "5y", label: "5 anos", shortLabel: "5A", days: 365 * 5 },
+  { key: "all", label: "Desde el primer dia", shortLabel: "Todo", days: null },
+];
+
+const CHART_HEIGHT = 190;
+const SNAPSHOT_SAVE_INTERVAL_MS = 5 * 60 * 1000;
+const SNAPSHOT_SAVE_MIN_DELTA = 1;
+
+const currencyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const shortDateFormatter = new Intl.DateTimeFormat("es-PE", {
+  day: "2-digit",
+  month: "short",
+  year: "2-digit",
+});
+
+const getLocalDateKey = (date = new Date()): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const parseSnapshotDate = (snapshot: CapitalSnapshot): Date => {
+  if (snapshot.date) {
+    const parsed = new Date(snapshot.date);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  return new Date(`${snapshot.dateKey}T00:00:00`);
+};
+
+const toChartPoint = (snapshot: CapitalSnapshot): ChartPoint | null => {
+  const totalUsd = Number(snapshot.totalUsd);
+  const date = parseSnapshotDate(snapshot);
+  if (!snapshot.dateKey || !Number.isFinite(totalUsd) || Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return {
+    ...snapshot,
+    totalUsd,
+    time: date.getTime(),
+  };
+};
+
+const mergeCapitalSnapshot = (
+  history: CapitalSnapshot[],
+  snapshot: CapitalSnapshot
+): CapitalSnapshot[] => {
+  const byDate = new Map<string, CapitalSnapshot>();
+  for (const item of history) {
+    if (item?.dateKey) byDate.set(item.dateKey, item);
+  }
+  byDate.set(snapshot.dateKey, snapshot);
+
+  return Array.from(byDate.values()).sort(
+    (a, b) => parseSnapshotDate(a).getTime() - parseSnapshotDate(b).getTime()
+  );
+};
+
+const formatSignedCurrency = (value: number): string => {
+  const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${prefix}${currencyFormatter.format(Math.abs(value))}`;
+};
+
+const formatSignedPercent = (value: number | null): string => {
+  if (value === null || !Number.isFinite(value)) return "-";
+  const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${prefix}${Math.abs(value).toFixed(2)}%`;
+};
+
+const formatDateLabel = (snapshot: ChartPoint | null): string =>
+  snapshot ? shortDateFormatter.format(new Date(snapshot.time)) : "-";
+
+const buildPeriodGain = (
+  history: CapitalSnapshot[],
+  period: GainPeriod,
+  now = new Date()
+): PeriodGain => {
+  const points = history
+    .map(toChartPoint)
+    .filter((point): point is ChartPoint => point !== null)
+    .sort((a, b) => a.time - b.time);
+
+  if (points.length === 0) {
+    return {
+      period,
+      startSnapshot: null,
+      endSnapshot: null,
+      gain: 0,
+      gainPct: null,
+      points: [],
+    };
+  }
+
+  const endSnapshot = points[points.length - 1];
+  const startTime =
+    period.days === null
+      ? points[0].time
+      : now.getTime() - period.days * 24 * 60 * 60 * 1000;
+
+  const beforeOrAtStart = [...points].reverse().find(point => point.time <= startTime);
+  const afterOrAtStart = points.find(point => point.time >= startTime);
+  const startSnapshot =
+    period.days === null ? points[0] : beforeOrAtStart ?? afterOrAtStart ?? points[0];
+
+  const rangePoints = points.filter(point => point.time >= startSnapshot.time);
+  const dedupedPoints = [startSnapshot, ...rangePoints].filter(
+    (point, index, arr) => arr.findIndex(item => item.dateKey === point.dateKey) === index
+  );
+
+  const gain = endSnapshot.totalUsd - startSnapshot.totalUsd;
+  const gainPct = startSnapshot.totalUsd > 0 ? (gain / startSnapshot.totalUsd) * 100 : null;
+
+  return {
+    period,
+    startSnapshot,
+    endSnapshot,
+    gain,
+    gainPct,
+    points: dedupedPoints,
+  };
+};
+
+function CapitalHistoryChart({
+  points,
+  width,
+  height,
+}: {
+  points: ChartPoint[];
+  width: number;
+  height: number;
+}) {
+  const leftPadding = 12;
+  const rightPadding = 12;
+  const topPadding = 18;
+  const bottomPadding = 26;
+  const plotWidth = Math.max(width - leftPadding - rightPadding, 1);
+  const plotHeight = Math.max(height - topPadding - bottomPadding, 1);
+  const sortedPoints = [...points].sort((a, b) => a.time - b.time);
+  const values = sortedPoints.map(point => point.totalUsd);
+  const minValue = values.length ? Math.min(...values) : 0;
+  const maxValue = values.length ? Math.max(...values) : 0;
+  const valueRange = maxValue - minValue;
+  const timeMin = sortedPoints[0]?.time ?? 0;
+  const timeMax = sortedPoints[sortedPoints.length - 1]?.time ?? timeMin;
+  const timeRange = timeMax - timeMin;
+
+  const plotted = sortedPoints.map((point, index) => {
+    const x =
+      sortedPoints.length === 1
+        ? leftPadding + plotWidth / 2
+        : leftPadding +
+          (timeRange > 0
+            ? ((point.time - timeMin) / timeRange) * plotWidth
+            : (index / Math.max(sortedPoints.length - 1, 1)) * plotWidth);
+    const y =
+      valueRange > 0
+        ? topPadding + (1 - (point.totalUsd - minValue) / valueRange) * plotHeight
+        : topPadding + plotHeight / 2;
+
+    return { ...point, x, y };
+  });
+
+  const segments = plotted.slice(1).map((point, index) => {
+    const previous = plotted[index];
+    const dx = point.x - previous.x;
+    const dy = point.y - previous.y;
+    const length = Math.sqrt(dx * dx + dy * dy);
+    const angle = Math.atan2(dy, dx);
+
+    return {
+      key: `${previous.dateKey}-${point.dateKey}`,
+      left: previous.x + dx / 2 - length / 2,
+      top: previous.y + dy / 2 - 1,
+      width: length,
+      angle,
+    };
+  });
+
+  return (
+    <View>
+      <View style={[styles.chartBox, { width, height }]}>
+        {[0, 1, 2].map(row => (
+          <View
+            key={row}
+            style={[
+              styles.chartGridLine,
+              { top: topPadding + (plotHeight / 2) * row, left: leftPadding, width: plotWidth },
+            ]}
+          />
+        ))}
+
+        {segments.map(segment => (
+          <View
+            key={segment.key}
+            style={[
+              styles.chartSegment,
+              {
+                left: segment.left,
+                top: segment.top,
+                width: segment.width,
+                transform: [{ rotate: `${segment.angle}rad` }],
+              },
+            ]}
+          />
+        ))}
+
+        {plotted.map(point => (
+          <View
+            key={point.dateKey}
+            style={[styles.chartPoint, { left: point.x - 4, top: point.y - 4 }]}
+          />
+        ))}
+
+        <Text style={[styles.chartValueLabel, { top: 0, left: leftPadding }]}>
+          {currencyFormatter.format(maxValue)}
+        </Text>
+        <Text style={[styles.chartValueLabel, { bottom: 2, left: leftPadding }]}>
+          {currencyFormatter.format(minValue)}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 const parseNumberInput = (value: string | null | undefined): number | null => {
   if (value === undefined || value === null) return null;
   const sanitized = value.replace(/[^0-9,.-]/g, "").replace(/,/g, ".");
@@ -48,6 +315,7 @@ const parseNumberInput = (value: string | null | undefined): number | null => {
 };
 
 export default function PrediccionScreen() {
+  const { width: viewportWidth } = useWindowDimensions();
   const [loading, setLoading] = useState(true);
   const [totalUsd, setTotalUsd] = useState<number | null>(null);
   const [xirr, setXirr] = useState<number | null>(null);
@@ -73,13 +341,28 @@ export default function PrediccionScreen() {
   const [vooPrice, setVooPrice] = useState<number | null>(null);
   const [usdtSellPrice, setUsdtSellPrice] = useState<number | null>(null);
   const [stockPrices, setStockPrices] = useState<Record<string, number>>({});
-  const pricesRef = useRef<Record<string, number>>({});
-  const [pricesTick, setPricesTick] = useState(0); // tick para re-render al llegar precios
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
   const priceWsRef = useRef<WebSocket | null>(null);
+  const snapshotSaveRef = useRef<{ dateKey: string; totalUsd: number; savedAt: number } | null>(null);
 
   // Flujos de caja para XIRR
   const [initialFlow, setInitialFlow] = useState<CashFlow | null>(null);
   const [flows, setFlows] = useState<CashFlow[]>([]);
+  const [capitalHistory, setCapitalHistory] = useState<CapitalSnapshot[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [selectedGainPeriod, setSelectedGainPeriod] = useState<PeriodKey>("1m");
+
+  const fetchCapitalHistory = useCallback(async () => {
+    try {
+      setHistoryLoading(true);
+      const res = await api.get<CapitalSnapshot[]>("/capital-history");
+      setCapitalHistory(Array.isArray(res.data) ? res.data : []);
+    } catch (err) {
+      console.error("Error al traer historial de capital:", err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
 
   const resetInputsToDefaults = useCallback(() => {
     setStartInitialized(false);
@@ -172,14 +455,16 @@ export default function PrediccionScreen() {
     useCallback(() => {
       hasFetchedOnFocus.current = true;
       fetchData();
-    }, [fetchData])
+      fetchCapitalHistory();
+    }, [fetchData, fetchCapitalHistory])
   );
 
   useEffect(() => {
     if (!hasFetchedOnFocus.current) {
       fetchData();
+      fetchCapitalHistory();
     }
-  }, [fetchData]);
+  }, [fetchData, fetchCapitalHistory]);
 
   useEffect(() => {
     if (totalUsd !== null && totalUsd > 0) {
@@ -350,43 +635,6 @@ export default function PrediccionScreen() {
     symbols.forEach(sym => fetchStockPrice(sym));
   }, [stockHoldings, fetchStockPrice]);
 
-  // Calcular totalUsd exactamente como Balances
-  useEffect(() => {
-    const compute = () => {
-      if (!balances) return;
-      // USDT con precio configurado
-      const usdtPrice = usdtSellPrice ?? 1;
-      // Construir balances extendidos como en balances.tsx
-      const mapped = [
-        ...balances.map(b => {
-          if (b.asset === 'USDT') {
-            return { ...b, usdValue: b.total * usdtPrice };
-          }
-          const live = pricesRef.current[b.asset];
-          if (typeof live === 'number' && Number.isFinite(live) && b.total > 0) {
-            return { ...b, usdValue: b.total * live };
-          }
-          return b;
-        }),
-        // stocks desde holdings (precio VOO por ahora si aplica)
-        ...stockHoldings.map(holding => {
-          const { asset, total } = holding;
-          let price: number | null = null;
-          if (asset === 'VOO') price = typeof vooPrice === 'number' ? vooPrice : null;
-          else if (typeof stockPrices[asset] === 'number') price = stockPrices[asset];
-          const usdValue = price != null ? total * price : total;
-          return { asset, total, usdValue } as Balance;
-        }),
-        { asset: 'USD', total: totals.usd, usdValue: totals.usd },
-        { asset: 'PEN', total: totals.pen, usdValue: penPrice ? totals.pen * penPrice : 0 },
-      ].filter(b => b.usdValue > 0);
-
-      const sum = mapped.reduce((acc, b) => acc + (b.asset === 'PEN' && !penPrice ? 0 : b.usdValue), 0);
-      setTotalUsd(sum);
-    };
-    compute();
-  }, [balances, totals, usdtSellPrice, stockHoldings, vooPrice, penPrice, pricesTick]);
-
   const startPriceStream = useCallback((assets: string[]) => {
     try {
       if (priceWsRef.current) {
@@ -414,8 +662,9 @@ export default function PrediccionScreen() {
             const asset = symbol.replace(/USDT$/, "");
             const price = Number(closeStr);
             if (Number.isFinite(price)) {
-              pricesRef.current[asset] = price;
-              setPricesTick(t => (t + 1) % 1_000_000);
+              setLivePrices(prev => (
+                prev[asset] === price ? prev : { ...prev, [asset]: price }
+              ));
             }
           }
         } catch {}
@@ -477,15 +726,17 @@ export default function PrediccionScreen() {
   const stockBalances: Balance[] = useMemo(() => {
     return stockHoldings.map((holding) => {
       const isVoo = holding.asset === "VOO";
-      const hasPrice = typeof vooPrice === "number";
-      const usdValue = isVoo
-        ? hasPrice
-          ? holding.total * (vooPrice as number)
-          : holding.total
-        : holding.total;
+      const price = isVoo
+        ? typeof vooPrice === "number"
+          ? vooPrice
+          : null
+        : typeof stockPrices[holding.asset] === "number"
+          ? stockPrices[holding.asset]
+          : null;
+      const usdValue = price != null ? holding.total * price : holding.total;
       return { asset: holding.asset, total: holding.total, usdValue };
     });
-  }, [stockHoldings, vooPrice, pricesTick]);
+  }, [stockHoldings, vooPrice, stockPrices]);
 
   const { totalUsd: totalUsdCalculated } = useMemo(
     () =>
@@ -494,10 +745,10 @@ export default function PrediccionScreen() {
         totals,
         penPrice,
         usdtSellPrice,
-        livePrices: pricesRef.current,
+        livePrices,
         additionalBalances: stockBalances,
       }),
-    [balances, stockBalances, totals, penPrice, usdtSellPrice, pricesTick]
+    [balances, stockBalances, totals, penPrice, usdtSellPrice, livePrices]
   );
 
   // Mantener totalUsd en sync con el cálculo de Balances
@@ -506,6 +757,54 @@ export default function PrediccionScreen() {
       setTotalUsd(totalUsdCalculated);
     }
   }, [totalUsdCalculated]);
+
+  useEffect(() => {
+    if (totalUsd == null || !Number.isFinite(totalUsd) || totalUsd <= 0) return;
+
+    const dateKey = getLocalDateKey();
+    const roundedTotal = Number(totalUsd.toFixed(2));
+    const now = Date.now();
+    const previousSave = snapshotSaveRef.current;
+    const shouldSave =
+      !previousSave ||
+      previousSave.dateKey !== dateKey ||
+      (now - previousSave.savedAt >= SNAPSHOT_SAVE_INTERVAL_MS &&
+        Math.abs(previousSave.totalUsd - roundedTotal) >= SNAPSHOT_SAVE_MIN_DELTA);
+
+    if (!shouldSave) return;
+
+    snapshotSaveRef.current = { dateKey, totalUsd: roundedTotal, savedAt: now };
+
+    let cancelled = false;
+    api
+      .post<CapitalSnapshot>("/capital-history", {
+        dateKey,
+        totalUsd: roundedTotal,
+        source: "frontend",
+      })
+      .then(res => {
+        if (cancelled) return;
+        const savedSnapshot: CapitalSnapshot = res.data?.dateKey
+          ? res.data
+          : {
+              dateKey,
+              date: new Date().toISOString(),
+              totalUsd: roundedTotal,
+              source: "frontend",
+            };
+        setCapitalHistory(prev => mergeCapitalSnapshot(prev, savedSnapshot));
+      })
+      .catch(err => {
+        if (!cancelled) {
+          console.error("Error guardando capital diario:", err);
+          snapshotSaveRef.current = previousSave;
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [totalUsd]);
 
   // Recalcular XIRR y % de retiro cuando haya flujos + totalUsd
   useEffect(() => {
@@ -536,6 +835,28 @@ export default function PrediccionScreen() {
       setXirr(xirrResult);
     }
   }, [initialFlow, flows, totalUsd]);
+
+  const capitalHistoryWithCurrent = useMemo(() => {
+    if (totalUsd == null || !Number.isFinite(totalUsd) || totalUsd <= 0) {
+      return capitalHistory;
+    }
+
+    return mergeCapitalSnapshot(capitalHistory, {
+      dateKey: getLocalDateKey(),
+      date: new Date().toISOString(),
+      totalUsd: Number(totalUsd.toFixed(2)),
+      source: "frontend",
+    });
+  }, [capitalHistory, totalUsd]);
+
+  const periodGains = useMemo(
+    () => GAIN_PERIODS.map(period => buildPeriodGain(capitalHistoryWithCurrent, period)),
+    [capitalHistoryWithCurrent]
+  );
+
+  const selectedGain =
+    periodGains.find(item => item.period.key === selectedGainPeriod) ?? periodGains[2];
+  const chartWidth = Math.min(680, Math.max(220, viewportWidth - 56));
   
 
   return (
@@ -660,6 +981,94 @@ export default function PrediccionScreen() {
               )}
             </View>
           )}
+
+          <View style={styles.historySection}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>Avance de ganancias</Text>
+              {historyLoading && <ActivityIndicator size="small" />}
+            </View>
+
+            <View style={styles.periodTabs}>
+              {GAIN_PERIODS.map(period => {
+                const active = selectedGainPeriod === period.key;
+                return (
+                  <TouchableOpacity
+                    key={period.key}
+                    style={[styles.periodTab, active && styles.periodTabActive]}
+                    onPress={() => setSelectedGainPeriod(period.key)}
+                  >
+                    <Text style={[styles.periodTabText, active && styles.periodTabTextActive]}>
+                      {period.shortLabel}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={styles.selectedSummary}>
+              <Text style={styles.selectedPeriodLabel}>{selectedGain.period.label}</Text>
+              <Text
+                style={[
+                  styles.selectedGainValue,
+                  selectedGain.gain >= 0 ? styles.positiveText : styles.negativeText,
+                ]}
+              >
+                {formatSignedCurrency(selectedGain.gain)}
+              </Text>
+              <Text style={styles.selectedMeta}>
+                {formatDateLabel(selectedGain.startSnapshot)} a {formatDateLabel(selectedGain.endSnapshot)}
+                {"  "}({formatSignedPercent(selectedGain.gainPct)})
+              </Text>
+              <Text style={styles.selectedMeta}>
+                Capital actual:{" "}
+                {currencyFormatter.format(selectedGain.endSnapshot?.totalUsd ?? totalUsd ?? 0)}
+              </Text>
+            </View>
+
+            {selectedGain.points.length > 0 ? (
+              <>
+                <CapitalHistoryChart
+                  points={selectedGain.points}
+                  width={chartWidth}
+                  height={CHART_HEIGHT}
+                />
+                <View style={[styles.chartDateRow, { width: chartWidth }]}>
+                  <Text style={styles.chartDateText}>
+                    {formatDateLabel(selectedGain.points[0] ?? null)}
+                  </Text>
+                  <Text style={styles.chartDateText}>
+                    {formatDateLabel(selectedGain.points[selectedGain.points.length - 1] ?? null)}
+                  </Text>
+                </View>
+              </>
+            ) : (
+              <Text style={styles.emptyHistory}>Todavia no hay historial guardado.</Text>
+            )}
+
+            <View style={styles.periodSummaryGrid}>
+              {periodGains.map(item => {
+                const active = selectedGainPeriod === item.period.key;
+                return (
+                  <TouchableOpacity
+                    key={item.period.key}
+                    style={[styles.periodSummaryCard, active && styles.periodSummaryCardActive]}
+                    onPress={() => setSelectedGainPeriod(item.period.key)}
+                  >
+                    <Text style={styles.periodSummaryLabel}>{item.period.label}</Text>
+                    <Text
+                      style={[
+                        styles.periodSummaryValue,
+                        item.gain >= 0 ? styles.positiveText : styles.negativeText,
+                      ]}
+                    >
+                      {formatSignedCurrency(item.gain)}
+                    </Text>
+                    <Text style={styles.periodSummaryPct}>{formatSignedPercent(item.gainPct)}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
         </ScrollView>
       )}
     </View>
@@ -713,4 +1122,123 @@ const styles = StyleSheet.create({
   },
   resultText: { fontSize: 16, lineHeight: 22 },
   resultHighlight: { fontWeight: "bold" },
+  historySection: {
+    marginTop: 22,
+    paddingTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
+  },
+  sectionHeaderRow: {
+    minHeight: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  sectionTitle: { fontSize: 20, fontWeight: "700", color: "#111827" },
+  periodTabs: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 14,
+  },
+  periodTab: {
+    minWidth: 46,
+    minHeight: 36,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#fff",
+  },
+  periodTabActive: {
+    borderColor: "#2563eb",
+    backgroundColor: "#eff6ff",
+  },
+  periodTabText: { fontSize: 14, fontWeight: "700", color: "#4b5563" },
+  periodTabTextActive: { color: "#1d4ed8" },
+  selectedSummary: {
+    marginBottom: 12,
+    padding: 14,
+    borderRadius: 8,
+    backgroundColor: "#f9fafb",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  selectedPeriodLabel: { fontSize: 14, fontWeight: "700", color: "#374151" },
+  selectedGainValue: { marginTop: 6, fontSize: 28, fontWeight: "800" },
+  selectedMeta: { marginTop: 4, fontSize: 13, color: "#6b7280" },
+  positiveText: { color: "#15803d" },
+  negativeText: { color: "#b91c1c" },
+  chartBox: {
+    position: "relative",
+    overflow: "hidden",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
+  },
+  chartGridLine: {
+    position: "absolute",
+    height: 1,
+    backgroundColor: "#edf2f7",
+  },
+  chartSegment: {
+    position: "absolute",
+    height: 2,
+    borderRadius: 2,
+    backgroundColor: "#2563eb",
+  },
+  chartPoint: {
+    position: "absolute",
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#2563eb",
+    borderWidth: 2,
+    borderColor: "#ffffff",
+  },
+  chartValueLabel: {
+    position: "absolute",
+    fontSize: 11,
+    color: "#6b7280",
+    backgroundColor: "rgba(255,255,255,0.85)",
+    paddingRight: 4,
+  },
+  chartDateRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 6,
+    marginBottom: 14,
+  },
+  chartDateText: { fontSize: 12, color: "#6b7280" },
+  emptyHistory: {
+    paddingVertical: 18,
+    textAlign: "center",
+    color: "#6b7280",
+  },
+  periodSummaryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 24,
+  },
+  periodSummaryCard: {
+    width: "48%",
+    minHeight: 96,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
+  },
+  periodSummaryCardActive: {
+    borderColor: "#2563eb",
+    backgroundColor: "#f8fbff",
+  },
+  periodSummaryLabel: { fontSize: 12, fontWeight: "700", color: "#4b5563" },
+  periodSummaryValue: { marginTop: 8, fontSize: 17, fontWeight: "800" },
+  periodSummaryPct: { marginTop: 4, fontSize: 12, color: "#6b7280" },
 });
