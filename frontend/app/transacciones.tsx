@@ -1008,20 +1008,18 @@ export default function TransaccionesScreen() {
           let baseShare = 1 - normalized;
           baseShare = clamp(baseShare, 0, 1);
           const desiredBaseUsd = allocation * baseShare;
-          let targetBaseUsd = clamp(desiredBaseUsd, 0, maxBaseAllowed);
-
-          if (targetBaseUsd < actualBaseUsd && baseHoldUsd > 0) {
-            const protectedBaseUsd = Math.min(baseHoldUsd, actualBaseUsd);
-            targetBaseUsd = Math.max(targetBaseUsd, protectedBaseUsd);
-          }
-
-          let targetQuoteUsd = allocation - targetBaseUsd;
-          if (targetQuoteUsd < quoteHoldUsd) {
-            targetQuoteUsd = quoteHoldUsd;
-            targetBaseUsd = clamp(allocation - targetQuoteUsd, 0, maxBaseAllowed);
-          }
-
-          const baseDiffUsd = targetBaseUsd - actualBaseUsd;
+          const {
+            targetBaseUsd,
+            targetQuoteUsd,
+            baseDiffUsd,
+          } = applySlopeHoldThreshold({
+            targetBaseUsd: desiredBaseUsd,
+            actualBaseUsd,
+            allocation,
+            baseHoldUsd,
+            quoteHoldUsd,
+            maxBaseAllowed,
+          });
           const action: "buy" | "sell" = baseDiffUsd > 0 ? "buy" : "sell";
 
           // Si se espera una acción específica (solo USDTUSD/P2P), descarta la contraria
@@ -1201,20 +1199,20 @@ export default function TransaccionesScreen() {
       const normalized = priceRange === 0 ? 0.5 : clamp((price - min) / priceRange, 0, 1);
       let baseShare = clamp(1 - normalized, 0, 1);
       const desiredBaseUsd = allocation * baseShare;
-      let targetBaseUsd = clamp(desiredBaseUsd, 0, maxBaseAllowed);
+      const {
+        targetBaseUsd,
+        targetQuoteUsd,
+        baseDiffUsd: rawBaseDiffUsd,
+      } = applySlopeHoldThreshold({
+        targetBaseUsd: desiredBaseUsd,
+        actualBaseUsd,
+        allocation,
+        baseHoldUsd,
+        quoteHoldUsd,
+        maxBaseAllowed,
+      });
 
-      if (targetBaseUsd < actualBaseUsd && baseHoldUsd > 0) {
-        const protectedBaseUsd = Math.min(baseHoldUsd, actualBaseUsd);
-        targetBaseUsd = Math.max(targetBaseUsd, protectedBaseUsd);
-      }
-
-      let targetQuoteUsd = allocation - targetBaseUsd;
-      if (targetQuoteUsd < quoteHoldUsd) {
-        targetQuoteUsd = quoteHoldUsd;
-        targetBaseUsd = clamp(allocation - targetQuoteUsd, 0, maxBaseAllowed);
-      }
-
-      const baseDiffUsd = Number((targetBaseUsd - actualBaseUsd).toFixed(8));
+      const baseDiffUsd = Number(rawBaseDiffUsd.toFixed(8));
 
       if (Math.abs(baseDiffUsd) <= BASE_TOLERANCE) {
         return {
@@ -2649,6 +2647,53 @@ function getHoldingData(
 // clamp: limita un valor al rango [min, max].
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function applySlopeHoldThreshold({
+  targetBaseUsd,
+  actualBaseUsd,
+  allocation,
+  baseHoldUsd,
+  quoteHoldUsd,
+  maxBaseAllowed,
+}: {
+  targetBaseUsd: number;
+  actualBaseUsd: number;
+  allocation: number;
+  baseHoldUsd: number;
+  quoteHoldUsd: number;
+  maxBaseAllowed: number;
+}) {
+  const rawTargetBaseUsd = clamp(targetBaseUsd, 0, allocation);
+  const rawBaseDiffUsd = rawTargetBaseUsd - actualBaseUsd;
+  let effectiveTargetBaseUsd = rawTargetBaseUsd;
+
+  if (rawBaseDiffUsd < -BASE_TOLERANCE && baseHoldUsd > 0) {
+    const sellPressureUsd = Math.abs(rawBaseDiffUsd);
+    const adjustedSellUsd = sellPressureUsd - baseHoldUsd;
+    effectiveTargetBaseUsd =
+      adjustedSellUsd > BASE_TOLERANCE
+        ? Math.max(actualBaseUsd - adjustedSellUsd, 0)
+        : actualBaseUsd;
+  } else if (rawBaseDiffUsd > BASE_TOLERANCE && quoteHoldUsd > 0) {
+    const buyPressureUsd = rawBaseDiffUsd;
+    const adjustedBuyUsd = buyPressureUsd - quoteHoldUsd;
+    effectiveTargetBaseUsd =
+      adjustedBuyUsd > BASE_TOLERANCE
+        ? Math.min(actualBaseUsd + adjustedBuyUsd, maxBaseAllowed)
+        : actualBaseUsd;
+  } else if (quoteHoldUsd > 0 && rawBaseDiffUsd < -BASE_TOLERANCE) {
+    effectiveTargetBaseUsd = Math.min(rawTargetBaseUsd, maxBaseAllowed);
+  }
+
+  const targetQuoteUsd = allocation - effectiveTargetBaseUsd;
+  const baseDiffUsd = effectiveTargetBaseUsd - actualBaseUsd;
+
+  return {
+    targetBaseUsd: effectiveTargetBaseUsd,
+    targetQuoteUsd,
+    baseDiffUsd,
+  };
 }
 
 const DEFAULT_FEE_CURRENCIES = ["BNB", "BTC", "USDT", "USD"];
