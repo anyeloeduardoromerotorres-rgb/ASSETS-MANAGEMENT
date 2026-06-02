@@ -32,49 +32,43 @@ const toFiniteNumber = (value: unknown): number =>
 export function calculateTotalBalances({
   balances,
   totals,
-  penPrice,
   usdtSellPrice,
   livePrices = {},
   additionalBalances = [],
 }: CalculateTotalBalancesParams): CalculateTotalBalancesResult {
-  const safePenPrice = isPositiveFinite(penPrice) ? penPrice : null;
   const safeUsdtPrice = isPositiveFinite(usdtSellPrice) ? usdtSellPrice! : 1;
 
-  const normalizedBalances = balances.map((balance) => {
-    if (balance.asset === "USDT") {
-      return {
-        ...balance,
-        usdValue: balance.total * safeUsdtPrice,
-      };
-    }
+  const normalizedBalances = balances
+    .filter((balance) => balance.asset !== "PEN")
+    .map((balance) => {
+      if (balance.asset === "USDT") {
+        return {
+          ...balance,
+          usdValue: balance.total * safeUsdtPrice,
+        };
+      }
 
-    const livePrice = livePrices[balance.asset];
-    if (isPositiveFinite(livePrice) && balance.total > 0) {
-      return {
-        ...balance,
-        usdValue: balance.total * livePrice,
-      };
-    }
+      const livePrice = livePrices[balance.asset];
+      if (isPositiveFinite(livePrice) && balance.total > 0) {
+        return {
+          ...balance,
+          usdValue: balance.total * livePrice,
+        };
+      }
 
-    return { ...balance };
-  });
+      return { ...balance };
+    });
 
   const sanitizedAdditional = additionalBalances
     .filter((entry) => entry && entry.asset !== "USD" && entry.asset !== "PEN")
     .map((entry) => ({ ...entry }));
 
   const usdTotal = toFiniteNumber(totals.usd);
-  const penTotal = toFiniteNumber(totals.pen);
 
   const extendedBalances = [
     ...normalizedBalances,
     ...sanitizedAdditional,
     { asset: "USD", total: usdTotal, usdValue: usdTotal },
-    {
-      asset: "PEN",
-      total: penTotal,
-      usdValue: safePenPrice ? penTotal * safePenPrice : 0,
-    },
   ].filter((entry) => entry.usdValue > 0);
 
   const totalUsd = extendedBalances.reduce(

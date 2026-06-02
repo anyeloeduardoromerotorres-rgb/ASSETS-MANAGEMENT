@@ -34,16 +34,18 @@ type StockHolding = {
   total: number; // unidades (acciones) guardadas en la base
 };
 
+const CASH_LIKE_SYMBOLS = new Set(["SHV"]);
+
 export default function BalancesScreen() {
   const [balances, setBalances] = useState<Balance[]>([]);
   const [totals, setTotals] = useState<Totals>({ usd: 0, pen: 0 });
   const [loading, setLoading] = useState(true);
   const wsRef = useRef<WebSocket | null>(null);
   const listenKeyRef = useRef<string | null>(null);
-  const [penPrice, setPenPrice] = useState<number | null>(null);
   const [stockHoldings, setStockHoldings] = useState<StockHolding[]>([]);
   const [vooPrice, setVooPrice] = useState<number | null>(null);
   const [stockPrices, setStockPrices] = useState<Record<string, number>>({});
+  const [shvTotal, setShvTotal] = useState(0);
   const [usdtSellPrice, setUsdtSellPrice] = useState<number | null>(null);
   const pricesRef = useRef<Record<string, number>>({}); // precio por asset (ej: BTC -> 63000)
   const [pricesTick, setPricesTick] = useState(0); // para forzar re-render al actualizar precios
@@ -60,19 +62,6 @@ export default function BalancesScreen() {
       // silenciado
     } finally {
       setLoading(false);
-    }
-  };
-
-  // ✅ Precio PEN/USD
-  const fetchPenPrice = async () => {
-    try {
-      const res = await fetch("https://open.er-api.com/v6/latest/PEN");
-      const data = await res.json();
-      if (data.result === "success" && data.rates?.USD) {
-        setPenPrice(data.rates.USD);
-      }
-    } catch (err) {
-      // silenciado
     }
   };
 
@@ -111,7 +100,7 @@ export default function BalancesScreen() {
 
   // Traer precios de stocks en holdings (incluye GLDM u otros)
   useEffect(() => {
-    const symbols = stockHoldings.map(s => s.asset).filter(Boolean);
+    const symbols = [...stockHoldings.map(s => s.asset), "SHV"].filter(Boolean);
     symbols.forEach(sym => fetchStockPrice(sym));
   }, [stockHoldings, fetchStockPrice]);
 
@@ -160,7 +149,9 @@ export default function BalancesScreen() {
       const res = await api.get<AssetFromDB[]>("/assets");
       
 
-      const stocks = res.data.filter((a: AssetFromDB) => a.type === "stock");
+      const stocks = res.data.filter(
+        (a: AssetFromDB) => a.type === "stock" && !CASH_LIKE_SYMBOLS.has(a.symbol?.toUpperCase())
+      );
 
       const holdings: StockHolding[] = stocks.map((stock: AssetFromDB) => {
         let amount = 0;
@@ -199,7 +190,7 @@ export default function BalancesScreen() {
       // Armar lista de pares <ASSET>USDT para stream (excluye USD/USDT/PEN)
       const pairs = Array.from(new Set(
         assets
-          .filter(a => a && !["USDT", "USD", "PEN"].includes(a))
+          .filter(a => a && !["USDT", "USD", "PEN", "SHV"].includes(a))
           .map(a => `${a}USDT`)
       ));
 
@@ -246,22 +237,25 @@ export default function BalancesScreen() {
 
   useEffect(() => {
     fetchBalances();
-    fetchPenPrice();
     fetchVooPrice();
     fetchAssets();
     // Traer precio de venta USDT desde ConfigInfo (mismo que Index)
     (async () => {
       try {
-        const res = await api.get("/config-info/name/PrecioVentaUSDT");
-        const price = Number(res.data?.total);
+        const [usdtRes, shvRes] = await Promise.all([
+          api.get("/config-info/name/PrecioVentaUSDT"),
+          api.get("/config-info/name/totalSHV"),
+        ]);
+        const price = Number(usdtRes.data?.total);
+        const shv = Number(shvRes.data?.total);
         if (Number.isFinite(price)) setUsdtSellPrice(price);
+        if (Number.isFinite(shv)) setShvTotal(shv);
       } catch (err) {}
     })();
     initWebSocket();
 
     const interval = setInterval(() => {
       keepAliveListenKey();
-      fetchPenPrice();
       fetchVooPrice();
     }, 30 * 60 * 1000);
 
@@ -276,14 +270,18 @@ export default function BalancesScreen() {
   useFocusEffect(
     useCallback(() => {
       fetchBalances();
-      fetchPenPrice();
       fetchVooPrice();
       fetchAssets();
       (async () => {
         try {
-          const res = await api.get("/config-info/name/PrecioVentaUSDT");
-          const price = Number(res.data?.total);
+          const [usdtRes, shvRes] = await Promise.all([
+            api.get("/config-info/name/PrecioVentaUSDT"),
+            api.get("/config-info/name/totalSHV"),
+          ]);
+          const price = Number(usdtRes.data?.total);
+          const shv = Number(shvRes.data?.total);
           if (Number.isFinite(price)) setUsdtSellPrice(price);
+          if (Number.isFinite(shv)) setShvTotal(shv);
         } catch {}
       })();
     }, [])
@@ -309,16 +307,25 @@ export default function BalancesScreen() {
       calculateTotalBalances({
         balances,
         totals,
-        penPrice,
         usdtSellPrice,
         livePrices: pricesRef.current,
-        additionalBalances: stockBalances,
+        additionalBalances: [
+          ...stockBalances,
+          {
+            asset: "SHV",
+            total: shvTotal,
+            usdValue:
+              typeof stockPrices.SHV === "number" && Number.isFinite(stockPrices.SHV)
+                ? shvTotal * stockPrices.SHV
+                : 0,
+          },
+        ],
       }),
-    [balances, stockBalances, totals, penPrice, usdtSellPrice, pricesTick]
+    [balances, stockBalances, totals, usdtSellPrice, pricesTick, shvTotal, stockPrices.SHV]
   );
 
   const visibleBalances = useMemo(
-    () => extendedBalances.filter(balance => balance.usdValue >= 1),
+    () => extendedBalances.filter(balance => balance.asset !== "PEN" && balance.usdValue >= 1),
     [extendedBalances]
   );
 
@@ -334,8 +341,7 @@ export default function BalancesScreen() {
 
       <View style={styles.totalsContainer}>
         <Text style={styles.totalText}>
-          Total USD:{" "}
-          {penPrice ? `$${totalUsd.toFixed(2)}` : "Cargando..."}
+          Total USD: ${totalUsd.toFixed(2)}
         </Text>
       </View>
 
@@ -355,14 +361,13 @@ export default function BalancesScreen() {
             let price: number | null = null;
             if (b.asset === 'USDT') price = usdtSellPrice ?? 1;
             else if (b.asset === 'USD') price = 1;
-            else if (b.asset === 'PEN') price = penPrice ?? null;
             else if (typeof pricesRef.current[b.asset] === 'number') price = pricesRef.current[b.asset];
             if (price == null && b.total > 0) price = b.usdValue / b.total;
 
-            const amountText = ['USDT', 'USD', 'PEN'].includes(b.asset)
+            const amountText = ['USDT', 'USD'].includes(b.asset)
               ? b.total.toFixed(2)
               : b.total.toFixed(8);
-            const usdText = b.asset === 'PEN' && !penPrice ? 'Cargando...' : `$${b.usdValue.toFixed(2)}`;
+            const usdText = `$${b.usdValue.toFixed(2)}`;
 
             return (
               <View key={b.asset} style={styles.row}>

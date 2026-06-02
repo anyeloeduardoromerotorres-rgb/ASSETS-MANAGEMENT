@@ -26,7 +26,7 @@ import { calculateTotalBalances } from "../utils/calculateTotalBalances";
 type AssetDocument = {
   _id: string;
   symbol: string;
-  type: "fiat" | "crypto" | "stock" | "commodity";
+  type: "fiat" | "crypto" | "stock" | "commodity" | "cash-like";
   totalCapitalWhenLastAdded: number;
   high: number;
   low: number;
@@ -145,7 +145,9 @@ type FeePartPayload = {
 // transacción. los datos de cierre se manejan por separado. se trae los datos directamente de la base de datos.
 type TransactionDoc = {
   _id: string; // ID del documento de transacción en la base de datos
-  asset: string | { _id?: string }; // Referencia al activo (puede venir como string o subdocumento)
+  asset?: string | { _id?: string }; // Referencia al activo (puede venir como string o subdocumento)
+  assetSymbol?: string;
+  assetType?: AssetDocument["type"];
   type: "long" | "short"; // Dirección de la posición
   amount: number; // Cantidad base abierta
   openValueFiat: number; // Valor fiat invertido al abrir
@@ -241,11 +243,26 @@ const isBinanceExchangeValue = (value: unknown) => {
 const BASE_TOLERANCE = 1e-8; // Margen para cantidades base al comparar flotantes
 const PROFIT_TOLERANCE = 1e-6; // Margen para validar ganancias / cierres
 const REBALANCED_ASSET_TYPES = new Set(["crypto", "stock", "commodity"]);
+const CASH_LIKE_ASSETS = new Set(["SHV"]);
+const MANUAL_CASH_LIKE_ASSETS: AssetDocument[] = [
+  {
+    _id: "__cash_like_SHV",
+    symbol: "SHV",
+    type: "cash-like",
+    totalCapitalWhenLastAdded: 0,
+    high: 0,
+    low: 0,
+  },
+];
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 
+const isCashLikeAsset = (asset: AssetDocument) =>
+  CASH_LIKE_ASSETS.has(String(asset.symbol ?? "").toUpperCase());
+
 const isRebalancedAsset = (asset: AssetDocument) =>
+  !isCashLikeAsset(asset) &&
   REBALANCED_ASSET_TYPES.has(String(asset.type)) &&
   isFiniteNumber(asset.totalCapitalWhenLastAdded) &&
   asset.totalCapitalWhenLastAdded > 0 &&
@@ -253,6 +270,15 @@ const isRebalancedAsset = (asset: AssetDocument) =>
   asset.high > 0 &&
   isFiniteNumber(asset.low) &&
   asset.low >= 0;
+
+const getTransactionAssetKey = (tx: TransactionDoc) => {
+  if (typeof tx.asset === "string") return tx.asset;
+  if (tx.asset && typeof tx.asset._id === "string") return tx.asset._id;
+  if (typeof tx.assetSymbol === "string" && tx.assetSymbol.trim()) {
+    return tx.assetSymbol.trim().toUpperCase();
+  }
+  return null;
+};
 
 const toNumber = (value: unknown, fallback = 0) => {
   // Convierte valores potencialmente nulos o strings a number, usando fallback si no es finito.
@@ -635,8 +661,15 @@ export default function TransaccionesScreen() {
         const allAssets = assetsRes.data || [];
         const rebalancedAssets = allAssets.filter(isRebalancedAsset);
         const assets = rebalancedAssets;
+        const existingSymbols = new Set(allAssets.map(asset => asset.symbol?.toUpperCase?.()));
+        const manualCashLikeAssets = MANUAL_CASH_LIKE_ASSETS.filter(
+          asset => !existingSymbols.has(asset.symbol.toUpperCase())
+        );
         setAssetOptions(
-          allAssets.filter(asset => REBALANCED_ASSET_TYPES.has(String(asset.type)))
+          [
+            ...allAssets.filter(asset => REBALANCED_ASSET_TYPES.has(String(asset.type))),
+            ...manualCashLikeAssets,
+          ]
         );
 
         // Normalización de balances de Binance y totales agregados.
@@ -677,12 +710,7 @@ export default function TransaccionesScreen() {
       const openTransactionsByAsset = new Map<string, OpenPositionsByAsset>();
       transactionsList.forEach(tx => {
         if (!tx || tx.status !== "open") return;
-        const assetId =
-          typeof tx.asset === "string"
-            ? tx.asset
-            : tx.asset && typeof tx.asset._id === "string"
-            ? tx.asset._id
-            : null;
+        const assetId = getTransactionAssetKey(tx);
         if (!assetId) return;
         const normalized = normalizeOpenPosition(tx);
         if (!normalized) return;
@@ -1370,7 +1398,8 @@ export default function TransaccionesScreen() {
       const derived = resolveOperationForAction(operation);
       const defaultType: "long" | "short" = derived.action === "sell" ? "short" : "long";
       const isStock = derived.assetType === "stock";
-      const fiatCurrency = isStock ? "USD" : derived.quoteAsset?.toUpperCase?.() ?? "USDT";
+      const isCashLike = derived.assetType === "cash-like";
+      const fiatCurrency = isStock || isCashLike ? "USD" : derived.quoteAsset?.toUpperCase?.() ?? "USDT";
       const pricePrecision = fiatCurrency === "USDT" ? 8 : 6;
       const defaultPrice = formatNumberForInput(derived.price, pricePrecision);
       const defaultAmount = formatNumberForInput(derived.suggestedBaseAmount, 8);
@@ -1391,9 +1420,9 @@ export default function TransaccionesScreen() {
         openValueFiat: defaultFiat,
         fiatCurrency,
         openFee: "",
-        openFeeCurrency: isStock ? "USD" : derived.isBinance ? "BNB" : "USD",
+        openFeeCurrency: isStock || isCashLike ? "USD" : derived.isBinance ? "BNB" : "USD",
         openFee2: "",
-        openFeeCurrency2: isStock ? "USD" : derived.baseAsset?.toUpperCase?.() ?? "BTC",
+        openFeeCurrency2: isStock || isCashLike ? "USD" : derived.baseAsset?.toUpperCase?.() ?? "BTC",
         openDate: defaultOpenDate,
       });
       setShowSecondFee(false);
@@ -1405,8 +1434,9 @@ export default function TransaccionesScreen() {
 
   const registerOpenDateLabel = useMemo(() => formatDateTimeLabel(registerForm.openDate), [registerForm.openDate]);
   const isRegisterStock = registerTarget?.assetType === "stock";
+  const isRegisterCashLike = registerTarget?.assetType === "cash-like";
   const feeCurrencyOptions = useMemo(() => {
-    if (isRegisterStock) {
+    if (isRegisterStock || isRegisterCashLike) {
       return ["USD"];
     }
     const baseAssetOption = registerTarget?.baseAsset?.toUpperCase?.();
@@ -1414,7 +1444,7 @@ export default function TransaccionesScreen() {
       return [...DEFAULT_FEE_CURRENCIES, baseAssetOption];
     }
     return DEFAULT_FEE_CURRENCIES;
-  }, [isRegisterStock, registerTarget?.baseAsset]);
+  }, [isRegisterStock, isRegisterCashLike, registerTarget?.baseAsset]);
 
   // Helper para cerrar el modal de registro y limpiar estado temporal.
   const closeRegisterModal = useCallback(() => {
@@ -1539,8 +1569,9 @@ export default function TransaccionesScreen() {
       return;
     }
 
+    const isCashLikeRegister = registerTarget.assetType === "cash-like";
     const fiatCurrency =
-      registerTarget.assetType === "stock"
+      registerTarget.assetType === "stock" || isCashLikeRegister
         ? "USD"
         : (registerForm.fiatCurrency || registerTarget.quoteAsset || "USDT").toUpperCase();
     const normalizedType: "long" | "short" = registerForm.type === "short" ? "short" : "long";
@@ -1553,13 +1584,18 @@ export default function TransaccionesScreen() {
     );
 
     const payload: Record<string, unknown> = {
-      asset: registerTarget.assetId,
       type: normalizedType,
       fiatCurrency,
       openPrice: price,
       amount,
       openValueFiat,
     };
+    if (isCashLikeRegister) {
+      payload.assetSymbol = registerTarget.symbol;
+      payload.assetType = "cash-like";
+    } else {
+      payload.asset = registerTarget.assetId;
+    }
 
     if (feeParts.length > 0) {
       payload.openFees = feeParts;
@@ -1611,8 +1647,7 @@ export default function TransaccionesScreen() {
 
           const residual = amount - plan.baseUsed;
           if (residual > BASE_TOLERANCE) {
-            await api.post("/transactions", {
-              asset: assetId,
+            const residualPayload: Record<string, unknown> = {
               type: "long",
               fiatCurrency,
               amount: residual,
@@ -1621,7 +1656,14 @@ export default function TransaccionesScreen() {
               openFees: prorateFeeParts(feeParts, residual / Math.max(amount, 1)),
               openDate: (payload.openDate as string) || new Date().toISOString(),
               status: "open",
-            });
+            };
+            if (isCashLikeRegister) {
+              residualPayload.assetSymbol = registerTarget.symbol;
+              residualPayload.assetType = "cash-like";
+            } else {
+              residualPayload.asset = assetId;
+            }
+            await api.post("/transactions", residualPayload);
           }
 
           Alert.alert("Transacción registrada", "Se cerraron posiciones existentes según el plan.");
@@ -1662,8 +1704,7 @@ export default function TransaccionesScreen() {
 
           const residual = amount - plan.baseUsed;
           if (residual > BASE_TOLERANCE) {
-            await api.post("/transactions", {
-              asset: assetId,
+            const residualPayload: Record<string, unknown> = {
               type: "short",
               fiatCurrency,
               amount: residual,
@@ -1672,7 +1713,14 @@ export default function TransaccionesScreen() {
               openFees: prorateFeeParts(feeParts, residual / Math.max(amount, 1)),
               openDate: (payload.openDate as string) || new Date().toISOString(),
               status: "open",
-            });
+            };
+            if (isCashLikeRegister) {
+              residualPayload.assetSymbol = registerTarget.symbol;
+              residualPayload.assetType = "cash-like";
+            } else {
+              residualPayload.asset = assetId;
+            }
+            await api.post("/transactions", residualPayload);
           }
 
           Alert.alert("Transacción registrada", "Se cerraron posiciones existentes según el plan.");
@@ -1737,7 +1785,8 @@ export default function TransaccionesScreen() {
 
     const { baseAsset, quoteAsset } = splitSymbol(asset.symbol);
     const isStockAsset = asset.type === "stock";
-    const normalizedQuote = isStockAsset ? "USD" : quoteAsset.toUpperCase();
+    const isCashLikeAssetOption = asset.type === "cash-like" || isCashLikeAsset(asset);
+    const normalizedQuote = isStockAsset || isCashLikeAssetOption ? "USD" : quoteAsset.toUpperCase();
     const exchangeValue = asset.exchange ?? asset.exchangeName ?? null;
     const exchangeId =
       typeof asset.exchange === "string"
@@ -1789,7 +1838,7 @@ export default function TransaccionesScreen() {
       openFee: "",
       openFeeCurrency: isStockAsset ? "USD" : binance ? "BNB" : "USD",
       openFee2: "",
-      openFeeCurrency2: isStockAsset ? "USD" : baseAsset.toUpperCase(),
+      openFeeCurrency2: isStockAsset || isCashLikeAssetOption ? "USD" : baseAsset.toUpperCase(),
       openDate: new Date().toISOString(),
     });
     setShowSecondFee(false);
@@ -2250,16 +2299,19 @@ export default function TransaccionesScreen() {
 
                 <Text style={styles.modalLabel}>Moneda fiat</Text>
                 <TextInput
-                  style={[styles.customInput, isRegisterStock && styles.customInputDisabled]}
+                  style={[
+                    styles.customInput,
+                    (isRegisterStock || isRegisterCashLike) && styles.customInputDisabled,
+                  ]}
                   value={registerForm.fiatCurrency}
                   onChangeText={value => {
-                    if (!isRegisterStock) {
+                    if (!isRegisterStock && !isRegisterCashLike) {
                       handleRegisterFieldChange("fiatCurrency", value.toUpperCase());
                     }
                   }}
                   autoCapitalize="characters"
                   placeholder="USDT"
-                  editable={!isRegisterStock}
+                  editable={!isRegisterStock && !isRegisterCashLike}
                 />
 
                 <Text style={styles.modalLabel}>Fee de apertura 1 (opcional)</Text>

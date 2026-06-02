@@ -30,6 +30,8 @@ type StockHolding = {
   total: number; // unidades (acciones) guardadas en la base
 };
 
+const CASH_LIKE_SYMBOLS = new Set(["SHV"]);
+
 /** Representa el resultado de la proyección financiera a futuro */
 type ProjectionResult =
   | { status: "success"; years: number; monthly: number; target: number }
@@ -341,6 +343,7 @@ export default function PrediccionScreen() {
   const [vooPrice, setVooPrice] = useState<number | null>(null);
   const [usdtSellPrice, setUsdtSellPrice] = useState<number | null>(null);
   const [stockPrices, setStockPrices] = useState<Record<string, number>>({});
+  const [shvTotal, setShvTotal] = useState(0);
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
   const priceWsRef = useRef<WebSocket | null>(null);
   const snapshotSaveRef = useRef<{ dateKey: string; totalUsd: number; savedAt: number } | null>(null);
@@ -419,7 +422,9 @@ export default function PrediccionScreen() {
         setVooPrice(voo);
       }
 
-      const stocks = (Array.isArray(assetsRes?.data) ? assetsRes.data : []).filter((a: AssetFromDB) => a.type === "stock");
+      const stocks = (Array.isArray(assetsRes?.data) ? assetsRes.data : []).filter(
+        (a: AssetFromDB) => a.type === "stock" && !CASH_LIKE_SYMBOLS.has(a.symbol?.toUpperCase())
+      );
       const holdings: StockHolding[] = stocks.map((stock: AssetFromDB) => {
         let amount = 0;
         if (typeof stock.initialInvestment === "number") {
@@ -436,10 +441,17 @@ export default function PrediccionScreen() {
       setStockHoldings(holdings);
 
       try {
-        const conf = await api.get("/config-info/name/PrecioVentaUSDT");
+        const [conf, shvConf] = await Promise.all([
+          api.get("/config-info/name/PrecioVentaUSDT"),
+          api.get("/config-info/name/totalSHV"),
+        ]);
         const price = Number(conf.data?.total);
+        const shv = Number(shvConf.data?.total);
         if (Number.isFinite(price)) {
           setUsdtSellPrice(price);
+        }
+        if (Number.isFinite(shv)) {
+          setShvTotal(shv);
         }
       } catch {}
     } catch (err) {
@@ -595,7 +607,9 @@ export default function PrediccionScreen() {
   const fetchAssetsLikeBalances = useCallback(async () => {
     try {
       const res = await api.get<AssetFromDB[]>("/assets");
-      const stocks = res.data.filter((a: AssetFromDB) => a.type === "stock");
+      const stocks = res.data.filter(
+        (a: AssetFromDB) => a.type === "stock" && !CASH_LIKE_SYMBOLS.has(a.symbol?.toUpperCase())
+      );
       const holdings: StockHolding[] = stocks.map((stock: AssetFromDB) => {
         let amount = 0;
         if (typeof stock.initialInvestment === "number") {
@@ -631,7 +645,7 @@ export default function PrediccionScreen() {
   }, []);
 
   useEffect(() => {
-    const symbols = stockHoldings.map(s => s.asset).filter(Boolean);
+    const symbols = [...stockHoldings.map(s => s.asset), "SHV"].filter(Boolean);
     symbols.forEach(sym => fetchStockPrice(sym));
   }, [stockHoldings, fetchStockPrice]);
 
@@ -686,9 +700,14 @@ export default function PrediccionScreen() {
     fetchAssetsLikeBalances();
     (async () => {
       try {
-        const res = await api.get("/config-info/name/PrecioVentaUSDT");
+        const [res, shvRes] = await Promise.all([
+          api.get("/config-info/name/PrecioVentaUSDT"),
+          api.get("/config-info/name/totalSHV"),
+        ]);
         const price = Number(res.data?.total);
+        const shv = Number(shvRes.data?.total);
         if (Number.isFinite(price)) setUsdtSellPrice(price);
+        if (Number.isFinite(shv)) setShvTotal(shv);
       } catch (err) {
         console.error("❌ Error obteniendo PrecioVentaUSDT:", err);
       }
@@ -714,9 +733,14 @@ export default function PrediccionScreen() {
       fetchAssetsLikeBalances();
       (async () => {
         try {
-          const res = await api.get("/config-info/name/PrecioVentaUSDT");
+          const [res, shvRes] = await Promise.all([
+            api.get("/config-info/name/PrecioVentaUSDT"),
+            api.get("/config-info/name/totalSHV"),
+          ]);
           const price = Number(res.data?.total);
+          const shv = Number(shvRes.data?.total);
           if (Number.isFinite(price)) setUsdtSellPrice(price);
+          if (Number.isFinite(shv)) setShvTotal(shv);
         } catch {}
       })();
     }, [fetchBalancesLikeBalancesScreen, fetchPenPriceLikeBalances, fetchVooPriceLikeBalances, fetchAssetsLikeBalances])
@@ -746,9 +770,19 @@ export default function PrediccionScreen() {
         penPrice,
         usdtSellPrice,
         livePrices,
-        additionalBalances: stockBalances,
+        additionalBalances: [
+          ...stockBalances,
+          {
+            asset: "SHV",
+            total: shvTotal,
+            usdValue:
+              typeof stockPrices.SHV === "number" && Number.isFinite(stockPrices.SHV)
+                ? shvTotal * stockPrices.SHV
+                : 0,
+          },
+        ],
       }),
-    [balances, stockBalances, totals, penPrice, usdtSellPrice, livePrices]
+    [balances, stockBalances, totals, penPrice, usdtSellPrice, livePrices, shvTotal, stockPrices.SHV]
   );
 
   // Mantener totalUsd en sync con el cálculo de Balances

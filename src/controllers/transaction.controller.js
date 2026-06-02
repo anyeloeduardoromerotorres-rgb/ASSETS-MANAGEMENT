@@ -4,6 +4,7 @@ import Asset from "../models/asset.model.js";
 import ConfigInfo from "../models/configInfo.model.js";
 
 const KNOWN_QUOTES = ["USDT", "USDC", "BUSD", "BTC", "ETH", "USD", "PEN"];
+const CASH_LIKE_SYMBOLS = new Set(["SHV"]);
 
 const USDT_RATE_KEYS = [
   "PrecioVentaUSDT",
@@ -61,6 +62,43 @@ const adjustConfigTotal = async (names, delta) => {
   doc.total = updatedTotal;
   await doc.save();
   return doc;
+};
+
+const isCashLikeSymbol = symbol =>
+  CASH_LIKE_SYMBOLS.has(String(symbol ?? "").toUpperCase());
+
+const adjustCashLikeBalance = async (symbol, delta) => {
+  const normalized = String(symbol ?? "").toUpperCase();
+  if (!isCashLikeSymbol(normalized)) return null;
+  return adjustConfigTotal([`total${normalized}`], delta);
+};
+
+const applyBalanceDeltas = async ({ assetDoc, assetSymbol, baseDelta, quoteDelta }) => {
+  const symbol = assetDoc?.symbol ?? assetSymbol;
+  const { baseAsset, quoteAsset } = splitSymbol(symbol);
+  const baseAssetUpper = (baseAsset || "").toUpperCase();
+  const quoteAssetUpper = (quoteAsset || "").toUpperCase();
+
+  if (baseAssetUpper === "USD") {
+    await adjustConfigTotal(["totalUSD"], baseDelta);
+  } else if (baseAssetUpper === "PEN") {
+    await adjustConfigTotal(["totalPen", "totalPEN"], baseDelta);
+  } else if (isCashLikeSymbol(baseAssetUpper)) {
+    await adjustCashLikeBalance(baseAssetUpper, baseDelta);
+  } else if (assetDoc && (assetDoc.type === "stock" || baseAssetUpper === assetDoc.symbol?.toUpperCase?.())) {
+    const currentAmount = extractHoldingAmount(assetDoc.initialInvestment);
+    const newAmount = Math.max(0, currentAmount + baseDelta);
+    assetDoc.initialInvestment = applyHoldingAmount(assetDoc.initialInvestment, newAmount);
+    await assetDoc.save();
+  }
+
+  if (quoteAssetUpper === "USD") {
+    await adjustConfigTotal(["totalUSD"], quoteDelta);
+  } else if (quoteAssetUpper === "PEN") {
+    await adjustConfigTotal(["totalPen", "totalPEN"], quoteDelta);
+  } else if (isCashLikeSymbol(quoteAssetUpper)) {
+    await adjustCashLikeBalance(quoteAssetUpper, quoteDelta);
+  }
 };
 
 async function getUsdtUsdRate() {
@@ -250,6 +288,8 @@ export async function createTransaction(req, res) {
   try {
     const {
       asset,
+      assetSymbol,
+      assetType,
       type = "long",
       fiatCurrency = "USDT",
       openDate,
@@ -263,6 +303,11 @@ export async function createTransaction(req, res) {
     } = req.body;
 
     const normalizedAmount = amount ?? quantity;
+    const normalizedAssetSymbol =
+      typeof assetSymbol === "string" && assetSymbol.trim().length > 0
+        ? assetSymbol.trim().toUpperCase()
+        : null;
+    const isCashLikeTransaction = !asset && isCashLikeSymbol(normalizedAssetSymbol);
     const parsedPrice = Number(openPrice);
     const parsedAmount = Number(normalizedAmount);
     const parsedOpenValue = Number(openValueFiat);
@@ -280,7 +325,7 @@ export async function createTransaction(req, res) {
       typeof type === "string" && type.toLowerCase() === "short" ? "short" : "long";
 
     if (
-      !asset ||
+      (!asset && !isCashLikeTransaction) ||
       !Number.isFinite(parsedPrice) ||
       parsedPrice <= 0 ||
       !Number.isFinite(parsedAmount) ||
@@ -296,7 +341,9 @@ export async function createTransaction(req, res) {
     }
 
     const tx = new Transaction({
-      asset,
+      asset: asset || undefined,
+      assetSymbol: normalizedAssetSymbol || undefined,
+      assetType: assetType || (isCashLikeTransaction ? "cash-like" : undefined),
       type: normalizedType,
       fiatCurrency: normalizedFiatCurrency,
       openDate: openDateValue,
@@ -311,33 +358,18 @@ export async function createTransaction(req, res) {
     await tx.save();
 
     try {
-      const assetDoc = await Asset.findById(asset);
+      const assetDoc = asset ? await Asset.findById(asset) : null;
 
-      if (assetDoc) {
-        const { baseAsset, quoteAsset } = splitSymbol(assetDoc.symbol);
+      if (assetDoc || isCashLikeTransaction) {
         const isLong = normalizedType === "long";
         const baseDelta = isLong ? parsedAmount : -parsedAmount;
         const quoteDelta = isLong ? -parsedOpenValue : parsedOpenValue;
-
-        const baseAssetUpper = (baseAsset || "").toUpperCase();
-        const quoteAssetUpper = (quoteAsset || "").toUpperCase();
-
-        if (baseAssetUpper === "USD") {
-          await adjustConfigTotal(["totalUSD"], baseDelta);
-        } else if (baseAssetUpper === "PEN") {
-          await adjustConfigTotal(["totalPen", "totalPEN"], baseDelta);
-        } else if (assetDoc.type === "stock" || baseAssetUpper === assetDoc.symbol) {
-          const currentAmount = extractHoldingAmount(assetDoc.initialInvestment);
-          const newAmount = Math.max(0, currentAmount + baseDelta);
-          assetDoc.initialInvestment = applyHoldingAmount(assetDoc.initialInvestment, newAmount);
-          await assetDoc.save();
-        }
-
-        if (quoteAssetUpper === "USD") {
-          await adjustConfigTotal(["totalUSD"], quoteDelta);
-        } else if (quoteAssetUpper === "PEN") {
-          await adjustConfigTotal(["totalPen", "totalPEN"], quoteDelta);
-        }
+        await applyBalanceDeltas({
+          assetDoc,
+          assetSymbol: normalizedAssetSymbol,
+          baseDelta,
+          quoteDelta,
+        });
       }
     } catch (adjustErr) {
       console.error("❌ Error actualizando balances tras la transacción:", adjustErr.message);
@@ -397,6 +429,8 @@ export async function closeTransaction(req, res) {
 
       const closedTx = new Transaction({
         asset: tx.asset,
+        assetSymbol: tx.assetSymbol,
+        assetType: tx.assetType,
         type: tx.type,
         fiatCurrency: tx.fiatCurrency,
         openDate: tx.openDate,
@@ -426,12 +460,9 @@ export async function closeTransaction(req, res) {
 
       // Apply balance adjustments only for the closed portion (closedTx)
       try {
-        const assetDoc = await Asset.findById(closedTx.asset);
+        const assetDoc = closedTx.asset ? await Asset.findById(closedTx.asset) : null;
 
-        if (assetDoc) {
-          const { baseAsset, quoteAsset } = splitSymbol(assetDoc.symbol);
-          const baseAssetUpper = baseAsset?.toUpperCase?.() ?? baseAsset;
-          const quoteAssetUpper = quoteAsset?.toUpperCase?.() ?? quoteAsset;
+        if (assetDoc || closedTx.assetSymbol) {
           const tradeAmount = closedTx.amount;
           const netQuote = closedTx.closeValueFiat;
 
@@ -446,22 +477,12 @@ export async function closeTransaction(req, res) {
             quoteDelta = -netQuote;
           }
 
-          if (baseAssetUpper === "USD") {
-            await adjustConfigTotal(["totalUSD"], baseDelta);
-          } else if (baseAssetUpper === "PEN") {
-            await adjustConfigTotal(["totalPen", "totalPEN"], baseDelta);
-          } else if (assetDoc.type === "stock" || baseAssetUpper === assetDoc.symbol?.toUpperCase?.()) {
-            const currentAmount = extractHoldingAmount(assetDoc.initialInvestment);
-            const newAmount = Math.max(0, currentAmount + baseDelta);
-            assetDoc.initialInvestment = applyHoldingAmount(assetDoc.initialInvestment, newAmount);
-            await assetDoc.save();
-          }
-
-          if (quoteAssetUpper === "USD") {
-            await adjustConfigTotal(["totalUSD"], quoteDelta);
-          } else if (quoteAssetUpper === "PEN") {
-            await adjustConfigTotal(["totalPen", "totalPEN"], quoteDelta);
-          }
+          await applyBalanceDeltas({
+            assetDoc,
+            assetSymbol: closedTx.assetSymbol,
+            baseDelta,
+            quoteDelta,
+          });
         }
       } catch (adjustErr) {
         console.error("❌ Error actualizando balances tras cerrar transacción (parcial):", adjustErr.message);
@@ -491,12 +512,9 @@ export async function closeTransaction(req, res) {
     await tx.save();
 
     try {
-      const assetDoc = await Asset.findById(tx.asset);
+        const assetDoc = tx.asset ? await Asset.findById(tx.asset) : null;
 
-      if (assetDoc) {
-        const { baseAsset, quoteAsset } = splitSymbol(assetDoc.symbol);
-        const baseAssetUpper = baseAsset?.toUpperCase?.() ?? baseAsset;
-        const quoteAssetUpper = quoteAsset?.toUpperCase?.() ?? quoteAsset;
+      if (assetDoc || tx.assetSymbol) {
         const tradeAmount = tx.amount;
         const netQuote = tx.closeValueFiat;
 
@@ -511,22 +529,12 @@ export async function closeTransaction(req, res) {
           quoteDelta = -netQuote;
         }
 
-        if (baseAssetUpper === "USD") {
-          await adjustConfigTotal(["totalUSD"], baseDelta);
-        } else if (baseAssetUpper === "PEN") {
-          await adjustConfigTotal(["totalPen", "totalPEN"], baseDelta);
-        } else if (assetDoc.type === "stock" || baseAssetUpper === assetDoc.symbol?.toUpperCase?.()) {
-          const currentAmount = extractHoldingAmount(assetDoc.initialInvestment);
-          const newAmount = Math.max(0, currentAmount + baseDelta);
-          assetDoc.initialInvestment = applyHoldingAmount(assetDoc.initialInvestment, newAmount);
-          await assetDoc.save();
-        }
-
-        if (quoteAssetUpper === "USD") {
-          await adjustConfigTotal(["totalUSD"], quoteDelta);
-        } else if (quoteAssetUpper === "PEN") {
-          await adjustConfigTotal(["totalPen", "totalPEN"], quoteDelta);
-        }
+        await applyBalanceDeltas({
+          assetDoc,
+          assetSymbol: tx.assetSymbol,
+          baseDelta,
+          quoteDelta,
+        });
       }
     } catch (adjustErr) {
       console.error("❌ Error actualizando balances tras cerrar transacción:", adjustErr.message);

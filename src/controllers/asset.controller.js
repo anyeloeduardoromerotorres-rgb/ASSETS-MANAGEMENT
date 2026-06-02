@@ -6,6 +6,10 @@ import { getCandlesWithStats } from "../scripts/fetchHistoricalMaxMin.js";
 import { calculateSlope } from "../scripts/linearRegression.js";
 
 const roundToEight = value => Number(Number(value).toFixed(8));
+const CASH_LIKE_SYMBOLS = new Set(["SHV"]);
+
+const isCashLikeSymbol = symbol =>
+  CASH_LIKE_SYMBOLS.has(String(symbol ?? "").toUpperCase());
 
 const calculateCapitalFromPercentage = (percentage, total) => {
   const parsedPercentage = Number(percentage);
@@ -46,6 +50,8 @@ export const createAsset = async (req, res) => {
       allocationPercentage,
       assets: assetsAllocationPercentages = [],
     } = req.body;
+    const normalizedSymbol = String(symbol ?? "").toUpperCase();
+    const requiresAllocation = type !== "fiat" && !isCashLikeSymbol(normalizedSymbol);
 
     const exchangeDoc = await Exchange.findOne({ name: exchange });
     if (!exchangeDoc) {
@@ -59,7 +65,7 @@ export const createAsset = async (req, res) => {
 
     const parsedAllocationPercentage = Number(allocationPercentage);
     if (
-      type !== "fiat" &&
+      requiresAllocation &&
       (!Number.isFinite(parsedAllocationPercentage) ||
         parsedAllocationPercentage < 0 ||
         parsedAllocationPercentage > 100)
@@ -71,7 +77,9 @@ export const createAsset = async (req, res) => {
       return res.status(400).json({ error: "assets debe ser un arreglo" });
     }
 
-    const nonFiatAssets = await Asset.find({ type: { $ne: "fiat" } });
+    const nonFiatAssets = (await Asset.find({ type: { $ne: "fiat" } })).filter(
+      asset => !isCashLikeSymbol(asset.symbol)
+    );
     const percentageByAssetId = new Map();
     const existingAssetIds = new Set(nonFiatAssets.map(asset => asset._id.toString()));
 
@@ -107,7 +115,7 @@ export const createAsset = async (req, res) => {
       0
     );
     const percentageTotal = roundToEight(
-      existingPercentageTotal + (type === "fiat" ? 0 : parsedAllocationPercentage)
+      existingPercentageTotal + (requiresAllocation ? parsedAllocationPercentage : 0)
     );
 
     if (Math.abs(percentageTotal - 100) > 0.000001) {
@@ -117,14 +125,14 @@ export const createAsset = async (req, res) => {
     const { candles, high, low, details } = await getCandlesWithStats(symbol, 7, type);
 
     const newAssetAllocationPercentage =
-      type === "fiat" ? 0 : roundToEight(parsedAllocationPercentage);
+      requiresAllocation ? roundToEight(parsedAllocationPercentage) : 0;
     const newAssetTotalCapitalWhenLastAdded =
-      type === "fiat"
-        ? 0
-        : calculateCapitalFromPercentage(
+      requiresAllocation
+        ? calculateCapitalFromPercentage(
             newAssetAllocationPercentage,
             parsedTotalCapitalWhenLastAdded
-          );
+          )
+        : 0;
 
     const asset = new Asset({
       symbol,
@@ -180,11 +188,13 @@ export const createAsset = async (req, res) => {
       })
     );
 
-    await ConfigInfo.findOneAndUpdate(
-      { name: "TotalUltimoActivoCreado" },
-      { total: parsedTotalCapitalWhenLastAdded },
-      { upsert: true, new: true }
-    );
+    if (requiresAllocation) {
+      await ConfigInfo.findOneAndUpdate(
+        { name: "TotalUltimoActivoCreado" },
+        { total: parsedTotalCapitalWhenLastAdded },
+        { upsert: true, new: true }
+      );
+    }
 
     res.status(201).json({
       message: "✅ Asset, CloseHistory y slope creados con éxito",
@@ -281,10 +291,10 @@ export const putAssets = async (req, res) => {
     }
 
     if (Object.prototype.hasOwnProperty.call(req.body, "allocationPercentage")) {
-      if (asset.type === "fiat") {
+      if (asset.type === "fiat" || isCashLikeSymbol(asset.symbol)) {
         return res
           .status(400)
-          .json({ error: "allocationPercentage no aplica para assets fiat" });
+          .json({ error: "allocationPercentage no aplica para assets fiat o cash-like" });
       }
 
       const value = req.body.allocationPercentage;

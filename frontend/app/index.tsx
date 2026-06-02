@@ -32,16 +32,6 @@ interface AssetDoc {
   type?: string;
 }
 
-interface UpdateUsdtResponse {
-  message?: string;
-  buyConfig: ConfigDoc;
-  sellConfig: ConfigDoc;
-  candle: {
-    closeTime: string;
-    close: number;
-  };
-}
-
 type StockSuggestion = {
   symbol: string;
   name: string;
@@ -68,6 +58,14 @@ type DeletableAsset = {
   type?: string;
 };
 
+type WalletPercentageRow = {
+  key: string;
+  assetId: string | null;
+  symbol: string;
+  type: string;
+  isNew: boolean;
+};
+
 type BinanceBalanceEntry = {
   asset: string;
   total: number;
@@ -87,6 +85,13 @@ const parseInput = (value: string) => {
 };
 
 const roundToEight = (value: number) => Number(value.toFixed(8));
+const CASH_LIKE_ASSETS = new Set(["SHV"]);
+
+const isCashLikeAsset = (asset: Pick<AssetDoc, "symbol">) =>
+  CASH_LIKE_ASSETS.has(String(asset.symbol ?? "").toUpperCase());
+
+const isCashLikeDraft = (asset: Pick<NewAssetDraft, "symbol">) =>
+  CASH_LIKE_ASSETS.has(String(asset.symbol ?? "").toUpperCase());
 
 const getInitialInvestmentAmount = (
   initialInvestment?: number | Record<string, unknown> | null
@@ -109,11 +114,10 @@ export default function Index() {
 
   // Documentos de configuracion persistidos en el backend.
   const [usdConfig, setUsdConfig] = useState<ConfigDoc | null>(null);
-  const [penConfig, setPenConfig] = useState<ConfigDoc | null>(null);
-  const [usdtBuyConfig, setUsdtBuyConfig] = useState<ConfigDoc | null>(null);
   const [usdtSellConfig, setUsdtSellConfig] = useState<ConfigDoc | null>(null);
   const [etoroConfig, setEtoroConfig] = useState<ConfigDoc | null>(null);
   const [totalUsdConfig, setTotalUsdConfig] = useState<ConfigDoc | null>(null);
+  const [shvConfig, setShvConfig] = useState<ConfigDoc | null>(null);
   const [assets, setAssets] = useState<AssetDoc[]>([]);
   const [lastCreatedAssetTotal, setLastCreatedAssetTotal] = useState<number | null>(null);
 
@@ -125,15 +129,12 @@ export default function Index() {
   // Datos externos usados para calcular el balance total disponible.
   const [binanceBalances, setBinanceBalances] = useState<BinanceBalanceEntry[]>([]);
   const [binanceTotals, setBinanceTotals] = useState<{ usd: number; pen: number } | null>(null);
-  const [penUsdRate, setPenUsdRate] = useState<number | null>(null);
   const [vooMarketPrice, setVooMarketPrice] = useState<number | null>(null);
 
   // Inputs controlados para editar configuraciones numericas.
   const [usdInput, setUsdInput] = useState("");
-  const [penInput, setPenInput] = useState("");
-  const [usdtBuyInput, setUsdtBuyInput] = useState("");
-  const [usdtSellInput, setUsdtSellInput] = useState("");
   const [etoroUsdInput, setEtoroUsdInput] = useState("");
+  const [shvInput, setShvInput] = useState("");
 
   // Estado del flujo para agregar un nuevo asset crypto o stock.
   const [showAddAssetOptions, setShowAddAssetOptions] = useState(false);
@@ -161,9 +162,8 @@ export default function Index() {
 
   // Banderas de guardado independientes para evitar dobles submits.
   const [savingUsd, setSavingUsd] = useState(false);
-  const [savingPen, setSavingPen] = useState(false);
-  const [savingUsdt, setSavingUsdt] = useState(false);
   const [savingEtoro, setSavingEtoro] = useState(false);
+  const [savingShv, setSavingShv] = useState(false);
 
   // Carga inicial: configuraciones financieras y lista de assets registrados.
   useEffect(() => {
@@ -182,12 +182,8 @@ export default function Index() {
         const usdDoc = configData.find(doc => doc?.name === "totalUSDBCP") ?? null;
         const etoroDoc = configData.find(doc => doc?.name === "totalUSDEtoro") ?? null;
         const totalUsdDoc = configData.find(doc => doc?.name === "totalUSD") ?? null;
-        const penDoc =
-          configData.find(doc => doc?.name === "totalPEN" || doc?.name === "totalPen") ??
-          null;
-        const buyDoc = findConfigByNames(configData, ["lastPriceUsdtBuy", "PrecioCompraUSDT"]);
-        // Leer específicamente del documento con name === "PrecioVentaUSDT"
-        const sellDoc = configData.find(doc => doc?.name === "PrecioVentaUSDT") ?? null;
+        let shvDoc = configData.find(doc => doc?.name === "totalSHV") ?? null;
+        const sellDoc = findConfigByNames(configData, ["PrecioVentaUSDT", "lastPriceUsdtSell"]);
         const lastCreatedDoc = configData.find(doc => doc?.name === "TotalUltimoActivoCreado") ?? null;
 
         if (usdDoc) {
@@ -205,17 +201,20 @@ export default function Index() {
         } else {
           setTotalUsdConfig(null);
         }
-        if (penDoc) {
-          setPenConfig(penDoc);
-          setPenInput(formatNumber(penDoc.total));
+        if (!shvDoc) {
+          const createdShv = await api.post<ConfigDoc>("/config-info", {
+            name: "totalSHV",
+            description: "Total invertido en SHV",
+            total: 0,
+          });
+          shvDoc = createdShv.data;
         }
-        if (buyDoc) {
-          setUsdtBuyConfig(buyDoc);
-          setUsdtBuyInput(formatNumber(buyDoc.total));
+        if (shvDoc) {
+          setShvConfig(shvDoc);
+          setShvInput(formatNumber(shvDoc.total));
         }
         if (sellDoc) {
           setUsdtSellConfig(sellDoc);
-          setUsdtSellInput(formatNumber(sellDoc.total));
         }
         if (lastCreatedDoc) {
           setLastCreatedAssetTotal(lastCreatedDoc.total);
@@ -251,23 +250,6 @@ export default function Index() {
     };
 
     fetchBinanceTotals();
-  }, []);
-
-  // Obtiene PEN/USD para convertir saldos en soles al calculo total en USD.
-  useEffect(() => {
-    const fetchPenRate = async () => {
-      try {
-        const res = await fetch("https://open.er-api.com/v6/latest/PEN");
-        const data = await res.json();
-        if (data.result === "success" && typeof data.rates?.USD === "number") {
-          setPenUsdRate(data.rates.USD);
-        }
-      } catch (err) {
-        console.error("❌ Error obteniendo tipo de cambio PEN/USD:", err);
-      }
-    };
-
-    fetchPenRate();
   }, []);
 
   // VOO se consulta aparte porque tambien puede existir como stock registrado.
@@ -306,22 +288,13 @@ export default function Index() {
   // Valores numericos derivados desde inputs de texto.
   const parsedUsd = useMemo(() => parseInput(usdInput), [usdInput]);
   const parsedEtoroUsd = useMemo(() => parseInput(etoroUsdInput), [etoroUsdInput]);
-  const parsedPen = useMemo(() => parseInput(penInput), [penInput]);
-  const parsedBuy = useMemo(() => parseInput(usdtBuyInput), [usdtBuyInput]);
-  const parsedSell = useMemo(() => parseInput(usdtSellInput), [usdtSellInput]);
+  const parsedShv = useMemo(() => parseInput(shvInput), [shvInput]);
   const canSaveUsd =
     !!usdConfig && !savingUsd && !Number.isNaN(parsedUsd) && parsedUsd !== usdConfig.total;
   const canSaveEtoro =
     !!etoroConfig && !savingEtoro && !Number.isNaN(parsedEtoroUsd) && parsedEtoroUsd !== etoroConfig.total;
-  const canSavePen =
-    !!penConfig && !savingPen && !Number.isNaN(parsedPen) && parsedPen !== penConfig.total;
-  const canSaveUsdt =
-    !!usdtBuyConfig &&
-    !!usdtSellConfig &&
-    !savingUsdt &&
-    !Number.isNaN(parsedBuy) &&
-    !Number.isNaN(parsedSell) &&
-    (parsedBuy !== usdtBuyConfig.total || parsedSell !== usdtSellConfig.total);
+  const canSaveShv =
+    !!shvConfig && !savingShv && !Number.isNaN(parsedShv) && parsedShv !== shvConfig.total;
 
   // Filtro local de pares Binance ya descargados.
   const filteredCryptoSymbols = useMemo(() => {
@@ -332,19 +305,35 @@ export default function Index() {
 
   // Subconjunto de assets que representan acciones o ETFs.
   const stockAssets = useMemo(
-    () => assets.filter(asset => (asset.type ?? "").toLowerCase() === "stock"),
+    () =>
+      assets.filter(
+        asset => (asset.type ?? "").toLowerCase() === "stock" && !isCashLikeAsset(asset)
+      ),
     [assets]
   );
+
+  const sortedStockAssets = useMemo(() => {
+    return [...stockAssets].sort((a, b) => {
+      const aSymbol = a.symbol?.toUpperCase() ?? "";
+      const bSymbol = b.symbol?.toUpperCase() ?? "";
+      if (aSymbol === "SHV" && bSymbol !== "SHV") return -1;
+      if (bSymbol === "SHV" && aSymbol !== "SHV") return 1;
+      return aSymbol.localeCompare(bSymbol);
+    });
+  }, [stockAssets]);
 
   const nonFiatAssets = useMemo(
-    () => assets.filter(asset => (asset.type ?? "").toLowerCase() !== "fiat"),
+    () =>
+      assets.filter(
+        asset => (asset.type ?? "").toLowerCase() !== "fiat" && !isCashLikeAsset(asset)
+      ),
     [assets]
   );
 
-  // Solo se permite borrar activos no fiat.
+  // Solo se permite borrar activos de inversion, no fiat ni cash-like.
   const deletableAssets = useMemo<DeletableAsset[]>(() => {
     return assets
-      .filter(asset => (asset.type ?? "").toLowerCase() !== "fiat")
+      .filter(asset => (asset.type ?? "").toLowerCase() !== "fiat" && !isCashLikeAsset(asset))
       .map(asset => ({
         _id: asset._id,
         symbol: asset.symbol,
@@ -396,8 +385,10 @@ export default function Index() {
   useEffect(() => {
     const symbols = Array.from(
       new Set(
-        stockAssets
-          .map(asset => asset.symbol?.toUpperCase())
+        [
+          ...stockAssets.map(asset => asset.symbol?.toUpperCase()),
+          "SHV",
+        ]
           .filter((symbol): symbol is string => Boolean(symbol))
       )
     );
@@ -406,14 +397,6 @@ export default function Index() {
       fetchStockPrice(sym);
     });
   }, [stockAssets, fetchStockPrice]);
-
-  // Normaliza assets tipo stock al formato esperado por calculateTotalBalances.
-  const stockHoldings = useMemo(() => {
-    return stockAssets.map(asset => ({
-      symbol: asset.symbol?.toUpperCase() ?? "",
-      amount: getInitialInvestmentAmount(asset.initialInvestment) ?? 0,
-    }));
-  }, [stockAssets]);
 
   // Convierte montos de acciones a valor USD usando precios de mercado cuando existen.
   const stockBalances = useMemo(() => {
@@ -457,24 +440,34 @@ export default function Index() {
   }, [binanceBalances, usdtSellPrice]);
 
   const usdTotalFromConfig = totalUsdConfig?.total ?? binanceTotals?.usd ?? 0;
-  const penTotalFromConfig = penConfig?.total ?? binanceTotals?.pen ?? 0;
 
   // Balance consolidado: Binance + fiat + acciones registradas.
-  const { extendedBalances, totalUsd: totalBalance } = useMemo(
+  const { totalUsd: totalBalance } = useMemo(
     () =>
       calculateTotalBalances({
         balances: adjustedBinanceBalances,
-        totals: { usd: usdTotalFromConfig, pen: penTotalFromConfig },
-        penPrice: penUsdRate,
+        totals: { usd: usdTotalFromConfig, pen: 0 },
         usdtSellPrice,
-        additionalBalances: stockBalances,
+        additionalBalances: [
+          ...stockBalances,
+          {
+            id: shvConfig?._id ?? "totalSHV",
+            asset: "SHV",
+            total: parsedShv,
+            usdValue:
+              Number.isNaN(parsedShv) || !Number.isFinite(stockPrices.SHV)
+                ? 0
+                : parsedShv * stockPrices.SHV,
+          },
+        ],
       }),
     [
       adjustedBinanceBalances,
       stockBalances,
+      shvConfig?._id,
+      parsedShv,
+      stockPrices.SHV,
       usdTotalFromConfig,
-      penTotalFromConfig,
-      penUsdRate,
       usdtSellPrice,
     ]
   );
@@ -490,7 +483,7 @@ export default function Index() {
   const canAccessAddAsset = useMemo(() => totalBalance > requiredBalance, [totalBalance, requiredBalance]);
 
   const walletPercentageRows = useMemo(() => {
-    const rows = nonFiatAssets.map(asset => ({
+    const rows: WalletPercentageRow[] = nonFiatAssets.map(asset => ({
       key: asset._id,
       assetId: asset._id,
       symbol: asset.symbol ?? "Activo",
@@ -498,7 +491,7 @@ export default function Index() {
       isNew: false,
     }));
 
-    if (newAssetDraft) {
+    if (newAssetDraft && !isCashLikeDraft(newAssetDraft)) {
       rows.push({
         key: "__new_asset__",
         assetId: null,
@@ -528,32 +521,6 @@ export default function Index() {
       const parsed = parseInput(walletPercentageInputs[row.key] ?? "");
       return !Number.isNaN(parsed) && parsed >= 0 && parsed <= 100;
     });
-
-  // Helper generico para guardar configuraciones simples con campo total.
-  const saveValue = async (
-    config: ConfigDoc | null,
-    parsed: number,
-    setConfig: (config: ConfigDoc) => void,
-    setInput: (value: string) => void,
-    setSaving: (value: boolean) => void,
-    successMessage: string,
-    errorMessage: string
-  ) => {
-    if (!config || Number.isNaN(parsed)) return;
-    try {
-      setSaving(true);
-      await api.put(`/config-info/${config._id}`, { total: parsed });
-      const updated = { ...config, total: parsed };
-      setConfig(updated);
-      setInput(formatNumber(parsed));
-      setFeedback(successMessage);
-    } catch (err) {
-      console.error(errorMessage, err);
-      setFeedback(errorMessage);
-    } finally {
-      setSaving(false);
-    }
-  };
 
   // Limpia el input al enfocarlo si todavia contiene el valor actual guardado.
   const handleFocusValue = (
@@ -623,50 +590,6 @@ export default function Index() {
     [stockInputs]
   );
 
-  // Guarda ambos precios USDT juntos porque el backend tambien registra la vela USDTUSD.
-  const saveUsdtPrices = async () => {
-    if (
-      !usdtBuyConfig ||
-      !usdtSellConfig ||
-      Number.isNaN(parsedBuy) ||
-      Number.isNaN(parsedSell)
-    ) {
-      return;
-    }
-
-    try {
-      setSavingUsdt(true);
-      const res = await api.put<UpdateUsdtResponse>("/config-info/usdt/prices", {
-        buyPrice: parsedBuy,
-        sellPrice: parsedSell,
-      });
-      const data = res.data;
-
-      if (data?.buyConfig) {
-        setUsdtBuyConfig(data.buyConfig);
-        setUsdtBuyInput(formatNumber(data.buyConfig.total));
-      } else {
-        setUsdtBuyConfig({ ...usdtBuyConfig, total: parsedBuy });
-        setUsdtBuyInput(formatNumber(parsedBuy));
-      }
-
-      if (data?.sellConfig) {
-        setUsdtSellConfig(data.sellConfig);
-        setUsdtSellInput(formatNumber(data.sellConfig.total));
-      } else {
-        setUsdtSellConfig({ ...usdtSellConfig, total: parsedSell });
-        setUsdtSellInput(formatNumber(parsedSell));
-      }
-
-      setFeedback(data?.message ?? "Precios USDT guardados correctamente.");
-    } catch (err) {
-      console.error("❌ Error guardando precios USDT:", err);
-      setFeedback("No se pudieron guardar los precios USDT.");
-    } finally {
-      setSavingUsdt(false);
-    }
-  };
-
   // Guarda BCP y actualiza totalUSD = BCP + Etoro
   const saveBcpUsd = async () => {
     if (!usdConfig || Number.isNaN(parsedUsd)) return;
@@ -724,6 +647,22 @@ export default function Index() {
       setFeedback("No se pudo guardar Total USD Etoro.");
     } finally {
       setSavingEtoro(false);
+    }
+  };
+
+  const saveShv = async () => {
+    if (!shvConfig || Number.isNaN(parsedShv)) return;
+    try {
+      setSavingShv(true);
+      const res = await api.put<ConfigDoc>(`/config-info/${shvConfig._id}`, { total: parsedShv });
+      setShvConfig(res.data);
+      setShvInput(formatNumber(res.data.total));
+      setFeedback("Total SHV guardado correctamente.");
+    } catch (err) {
+      console.error("Error guardando Total SHV:", err);
+      setFeedback("No se pudo guardar Total SHV.");
+    } finally {
+      setSavingShv(false);
     }
   };
 
@@ -922,8 +861,14 @@ export default function Index() {
       setSavingNewAsset(true);
       setNewAssetError(null);
 
-      const newAssetPercentage = parseInput(walletPercentageInputs.__new_asset__ ?? "");
-      if (Number.isNaN(newAssetPercentage) || newAssetPercentage < 0 || newAssetPercentage > 100) {
+      const draftIsCashLike = isCashLikeDraft(newAssetDraft);
+      const newAssetPercentage = draftIsCashLike
+        ? 0
+        : parseInput(walletPercentageInputs.__new_asset__ ?? "");
+      if (
+        !draftIsCashLike &&
+        (Number.isNaN(newAssetPercentage) || newAssetPercentage < 0 || newAssetPercentage > 100)
+      ) {
         throw new Error("Ingresa un porcentaje valido para el nuevo activo.");
       }
 
@@ -963,7 +908,9 @@ export default function Index() {
       const assetsData = Array.isArray(assetsRes.data) ? assetsRes.data : [];
       setAssets(assetsData);
 
-      setLastCreatedAssetTotal(totalBalance);
+      if (!draftIsCashLike) {
+        setLastCreatedAssetTotal(totalBalance);
+      }
 
       setFeedback(`Activo ${newAssetDraft.symbol} guardado correctamente.`);
       setNewAssetDraft(null);
@@ -1029,7 +976,7 @@ export default function Index() {
             exchange: item?.exchDisp || item?.exchange,
             type: item?.typeDisp || item?.quoteType,
           }))
-          .filter(item => item.symbol);
+          .filter((item: StockSuggestion) => item.symbol);
 
         if (!cancelled) {
           setStockResults(suggestions);
@@ -1395,78 +1342,28 @@ export default function Index() {
 
             <View style={styles.section}>
               <View style={styles.card}>
-                <Text style={styles.label}>Total PEN</Text>
+                <Text style={styles.label}>Total SHV</Text>
                 <TextInput
                   style={styles.input}
-                  value={penInput}
-                  onChangeText={setPenInput}
-                keyboardType="numeric"
-                placeholder="Ingrese total en PEN"
-                onFocus={() => handleFocusValue(penConfig?.total, penInput, setPenInput)}
-              />
-              {canSavePen && (
-                <Button
-                  title={savingPen ? "Guardando..." : "Guardar"}
-                  onPress={() =>
-                    saveValue(
-                      penConfig,
-                      parsedPen,
-                      updated => setPenConfig(updated),
-                      setPenInput,
-                      setSavingPen,
-                      "Total PEN guardado correctamente.",
-                      "No se pudo guardar Total PEN."
-                    )
-                  }
-                  disabled={savingPen}
-                />
-              )}
-              </View>
-            </View>
-
-            <View style={styles.row}>
-              <View style={[styles.card, styles.halfCard]}>
-                <Text style={styles.label}>Precio compra USDT</Text>
-                <TextInput
-                  style={styles.input}
-                  value={usdtBuyInput}
-                  onChangeText={setUsdtBuyInput}
+                  value={shvInput}
+                  onChangeText={setShvInput}
                   keyboardType="numeric"
-                  placeholder="Ingrese precio de compra"
-                  onFocus={() =>
-                    handleFocusValue(usdtBuyConfig?.total, usdtBuyInput, setUsdtBuyInput)
-                  }
+                  placeholder="Ingrese total en SHV"
+                  onFocus={() => handleFocusValue(shvConfig?.total, shvInput, setShvInput)}
                 />
-              </View>
-
-              <View style={[styles.card, styles.halfCard]}>
-                <Text style={styles.label}>Precio venta USDT</Text>
-                <TextInput
-                  style={styles.input}
-                  value={usdtSellInput}
-                  onChangeText={setUsdtSellInput}
-                  keyboardType="numeric"
-                  placeholder="Ingrese precio de venta"
-                  onFocus={() =>
-                    handleFocusValue(usdtSellConfig?.total, usdtSellInput, setUsdtSellInput)
-                  }
-                />
+                {canSaveShv && (
+                  <Button
+                    title={savingShv ? "Guardando..." : "Guardar"}
+                    onPress={saveShv}
+                    disabled={savingShv}
+                  />
+                )}
               </View>
             </View>
 
-            <View style={styles.section}>
-              {canSaveUsdt && (
-                <Button
-                  title={savingUsdt ? "Guardando..." : "Guardar precios USDT"}
-                  onPress={saveUsdtPrices}
-                  disabled={savingUsdt}
-                />
-              )}
-            </View>
-
-            {stockAssets.length > 0 && (
+            {sortedStockAssets.length > 0 && (
               <View style={styles.section}>
-                {stockAssets.map(asset => {
+                {sortedStockAssets.map(asset => {
                   const inputValue = stockInputs[asset._id] ?? "";
                   const saving = stockSavingMap[asset._id] ?? false;
                   const errorMessage = stockErrorMap[asset._id] ?? null;
@@ -1566,6 +1463,16 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 16,
     color: "#2e7d32",
+  },
+  helperText: {
+    fontSize: 14,
+    color: "#607d8b",
+    textAlign: "center",
+  },
+  emptyText: {
+    fontSize: 14,
+    color: "#607d8b",
+    textAlign: "center",
   },
   addAssetOptions: {
     marginTop: 12,

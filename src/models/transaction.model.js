@@ -6,7 +6,14 @@ const transactionSchema = new mongoose.Schema(
     asset: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Asset", // 🔹 Ej: BTCUSDT, ETHPEN, AAPLUSD
-      required: true,
+    },
+    assetSymbol: {
+      type: String,
+      trim: true,
+    },
+    assetType: {
+      type: String,
+      enum: ["fiat", "crypto", "stock", "commodity", "cash-like"],
     },
     type: {
       type: String,

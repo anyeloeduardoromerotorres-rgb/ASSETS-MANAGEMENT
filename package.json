@@ -8,7 +8,8 @@
     "dev": "nodemon src/index.js",
     "start": "node index.js",
     "backtest": "node src/scripts/backtestStrategy.js",
-    "backtest:symbols": "node src/scripts/backtestSymbols.js"
+    "backtest:symbols": "node src/scripts/backtestSymbols.js",
+    "export:transactions-excel": "node src/scripts/exportTransactionSuggestionsExcel.js"
   },
   "engines": {
     "node": ">=20"

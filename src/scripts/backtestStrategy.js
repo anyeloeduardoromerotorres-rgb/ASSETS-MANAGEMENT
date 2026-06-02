@@ -13,6 +13,7 @@ const DEFAULT_YEARS = 7;
 const DEFAULT_DRAWDOWN_YEARS = 5;
 const DEFAULT_MIN_TRADE_USD = 10;
 const REBALANCED_TYPES = new Set(["crypto", "stock", "commodity"]);
+const CASH_LIKE_SYMBOLS = new Set(["SHV"]);
 const DEFAULT_DNS_SERVERS = ["8.8.8.8", "1.1.1.1"];
 const DYNAMIC_BASE_WEIGHT = 0.7;
 const DYNAMIC_SIGNAL_WEIGHT = 0.3;
@@ -1085,6 +1086,7 @@ async function main() {
 
   const assets = await Asset.find({
     type: { $in: Array.from(REBALANCED_TYPES) },
+    symbol: { $nin: Array.from(CASH_LIKE_SYMBOLS) },
     allocationPercentage: { $gt: 0 },
   }).lean();
   const filteredAssets = args.excludeSymbols.length
@@ -1141,7 +1143,7 @@ async function main() {
   }
 
   const cashYieldEvents = args.cashYieldSymbol || args.enhancedIncome
-    ? await fetchYahooDividends(args.cashYieldSymbol ?? "SGOV", startDate, endDate)
+    ? await fetchYahooDividends(args.cashYieldSymbol ?? "SHV", startDate, endDate)
     : [];
   const assetDividendEventsBySymbol = args.enhancedIncome
     ? await fetchYahooDividendEventsBySymbol(["VOO"], startDate, endDate)
@@ -1253,7 +1255,7 @@ async function main() {
       );
     }
     if (args.enhancedIncome) {
-      console.log(`Ingresos netos SGOV sobre 50% cash: ${formatMoney(dynamicBacktest.cashYieldUsd ?? 0)}`);
+      console.log(`Ingresos netos SHV sobre 50% cash: ${formatMoney(dynamicBacktest.cashYieldUsd ?? 0)}`);
       console.log(`Interes USDT sobre 50% cash: ${formatMoney(dynamicBacktest.usdtInterestUsd ?? 0)}`);
       console.log(`Dividendos netos VOO: ${formatMoney(dynamicBacktest.assetDividendUsd ?? 0)}`);
       console.log(`Interes BTC unidades: ${(dynamicBacktest.btcInterestUnits ?? 0).toFixed(8)} BTC`);

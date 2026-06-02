@@ -36,8 +36,13 @@ export function signQuery(params = {}) {
   if (!apiSecret) {
     throw new Error("BINANCE_SECRET_KEY no configurada");
   }
-  const timestamp = Date.now();
-  const query = new URLSearchParams({ ...params, timestamp }).toString();
+  const timestampOffsetMs = Number(process.env.BINANCE_TIMESTAMP_OFFSET_MS ?? -2000);
+  const timestamp = Date.now() + (Number.isFinite(timestampOffsetMs) ? timestampOffsetMs : -2000);
+  const query = new URLSearchParams({
+    recvWindow: 10000,
+    ...params,
+    timestamp,
+  }).toString();
 
   const signature = crypto
     .createHmac("sha256", apiSecret)
