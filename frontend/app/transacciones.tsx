@@ -75,19 +75,17 @@ type Operation = {
   action: "buy" | "sell"; // Acción concreta sugerida a ejecutar
   // signo de la pendiente (slope) del activo: 1 = positiva, -1 = negativa, 0 = neutra
   slopeSign?: 1 | 0 | -1; // Dirección de tendencia: 1 alcista, -1 bajista, 0 neutra
-  buyPrice?: number; // Precio recomendado para compra (límite o referencia) usado solo para USDTUSD/P2P
-  sellPrice?: number; // Precio recomendado para venta (límite o referencia) usado solo para USDTUSD/P2P
   suggestedBaseAmount: number; // Cantidad base sugerida a comprar/vender (en unidades del baseAsset)
   suggestedFiatValue: number; // Valor en fiat sugerido a mover (en fiatCurrency) misma cantidad que suggestedBaseAmount 
   // pero en fiat
-  closingPositions?: Array<{
+  closingPositions?: {
     id: string; // ID de la posición/orden abierta a cerrar
     amount: number; // Cantidad base a cerrar en esa posición
     closeValueFiat: number; // Valor fiat estimado al cierre
     closePrice: number; // Precio esperado/objetivo de cierre, se usa precio actual.
     openPrice?: number;
     closureReason?: "profit" | "range_loss";
-  }>; // Plan de cierres parciales (si corresponde)
+  }[]; // Plan de cierres parciales (si corresponde)
   residualBaseAmount?: number; // Cantidad base remanente tras cerrar posiciones y ejecutar
   residualFiatValue?: number; // Valor fiat remanente tras la ejecución
   targetBaseUsd: number; // Valor objetivo en USD del activo base según la asignación
@@ -256,9 +254,6 @@ const isRebalancedAsset = (asset: AssetDocument) =>
   isFiniteNumber(asset.low) &&
   asset.low >= 0;
 
-const isManagedFiatPair = (asset: AssetDocument) =>
-  asset.type === "fiat" && (asset.symbol === "USDTUSD" || asset.symbol === "USDPEN");
-
 const toNumber = (value: unknown, fallback = 0) => {
   // Convierte valores potencialmente nulos o strings a number, usando fallback si no es finito.
   const num = typeof value === "number" ? value : Number(value);
@@ -342,14 +337,14 @@ const buildClosurePlan = (
   | {
       baseUsed: number;
       quoteUsed: number;
-      entries: Array<{
+      entries: {
         id: string;
         amount: number;
         closeValueFiat: number;
         closePrice: number;
         openPrice: number;
         closureReason: "profit" | "range_loss";
-      }>;
+      }[];
     }
   | null => {
   if (!orders.length) return null;
@@ -358,14 +353,14 @@ const buildClosurePlan = (
 
   let baseUsed = 0;
   let quoteUsed = 0;
-  const entries: Array<{
+  const entries: {
     id: string;
     amount: number;
     closeValueFiat: number;
     closePrice: number;
     openPrice: number;
     closureReason: "profit" | "range_loss";
-  }> = [];
+  }[] = [];
   const currentPrice = op.price;
   const quoteUpper = op.quoteAsset?.toUpperCase?.() ?? op.quoteAsset;
   const quoteDecimals = quoteUpper === "USDT" ? 8 : (quoteUpper === "USD" || quoteUpper === "PEN" ? 3 : 2);
@@ -609,7 +604,7 @@ export default function TransaccionesScreen() {
   const [showSecondFee, setShowSecondFee] = useState(false); // muestra el segundo fee solo cuando el usuario lo necesita
   const [datePickerVisible, setDatePickerVisible] = useState(false); // controla el modal del selector de fecha
   const [datePickerValue, setDatePickerValue] = useState<Date>(() => new Date()); // valor temporal del selector
-  const [assetOptions, setAssetOptions] = useState<AssetDocument[]>([]); // catálogo de pares disponibles
+  const [assetOptions, setAssetOptions] = useState<AssetDocument[]>([]); // catálogo de activos disponibles
   const [addTransactionModalVisible, setAddTransactionModalVisible] = useState(false); // modal para agregar manualmente
   const [manualSelectedAssetId, setManualSelectedAssetId] = useState<string | null>(null); // par elegido en el modal
 
@@ -636,12 +631,13 @@ export default function TransaccionesScreen() {
           api.get<TransactionDoc[]>("/transactions"),
         ]);
 
-        // Filtramos assets para separar los que son pares fiat útiles en la pantalla.
+        // Filtramos activos rebalanceables y activos disponibles para registro manual.
         const allAssets = assetsRes.data || [];
         const rebalancedAssets = allAssets.filter(isRebalancedAsset);
-        const fiatPairs = allAssets.filter(isManagedFiatPair);
-        const assets = [...rebalancedAssets, ...fiatPairs];
-        setAssetOptions(assets);
+        const assets = rebalancedAssets;
+        setAssetOptions(
+          allAssets.filter(asset => REBALANCED_ASSET_TYPES.has(String(asset.type)))
+        );
 
         // Normalización de balances de Binance y totales agregados.
         const balanceList = balancesRes.data?.balances ?? [];
@@ -667,26 +663,13 @@ export default function TransaccionesScreen() {
         return undefined;
       };
 
-      const resolvedUsdtBuy = getConfigNumber("PrecioCompraUSDT", "lastPriceUsdtBuy");
       const resolvedUsdtSell = getConfigNumber("PrecioVentaUSDT", "lastPriceUsdtSell");
-
-      const usdtBuyPrice =
-        typeof resolvedUsdtBuy === "number" && resolvedUsdtBuy > 0 ? resolvedUsdtBuy : null;
-      const usdtSellPrice =
-        typeof resolvedUsdtSell === "number" && resolvedUsdtSell > 0 ? resolvedUsdtSell : null;
-
-      const lastPriceUsdtBuy = usdtBuyPrice ?? usdtSellPrice ?? 1;
-      const lastPriceUsdtSell = usdtSellPrice ?? usdtBuyPrice ?? 1;
-
-      const usdtUsdRate = (() => {
-        if (usdtSellPrice) return usdtSellPrice;
-        if (usdtBuyPrice) return usdtBuyPrice;
-        return 1;
-      })();
+      const lastPriceUsdtSell =
+        typeof resolvedUsdtSell === "number" && resolvedUsdtSell > 0 ? resolvedUsdtSell : 1;
+      const usdtUsdRate = lastPriceUsdtSell || 1;
 
       const penUsdRate = penRes?.result === "success" && penRes?.rates?.USD ? penRes.rates.USD : null;
       const penToUsd = penUsdRate ?? 0; // USD por PEN
-      const usdToPen = penUsdRate ? 1 / penUsdRate : null; // PEN por USD
 
       const transactionsList = Array.isArray(transactionsRes.data) ? transactionsRes.data : [];
 
@@ -724,12 +707,7 @@ export default function TransaccionesScreen() {
       const nonCryptoAssets = rebalancedAssets.filter(asset => asset.type !== "crypto");
       const otherAssetPricesEntries = await Promise.all(
         nonCryptoAssets.map(async asset => {
-          const price = await fetchExternalAssetPrice(
-            asset.symbol,
-            asset.type,
-            lastPriceUsdtSell,
-            penToUsd
-          );
+          const price = await fetchExternalAssetPrice(asset.symbol, asset.type);
           return [asset.symbol, price ?? null] as const;
         })
       );
@@ -782,17 +760,14 @@ export default function TransaccionesScreen() {
 
       const configUsd = configMap.get("totalUSD") ?? 0;
       const penTotal = configMap.get("totalPen") ?? totals.pen ?? 0;
-      const penUsdValue = penToUsd ? penTotal * penToUsd : 0;
       const totalUsdFromBalances = totals.usd ?? configUsd;
-      const usdtBalanceEntry = balanceMap.get("USDT");
-      const usdtUsdValue = usdtBalanceEntry?.usdValue ?? 0;
 
       // Balance consolidado de todo el portafolio (mismo cálculo que la pantalla de Balances).
       const { totalUsd: portfolioTotal } = calculateTotalBalances({
         balances: balanceList,
         totals: { usd: totalUsdFromBalances, pen: penTotal },
         penPrice: penToUsd > 0 ? penToUsd : null,
-        usdtSellPrice,
+        usdtSellPrice: lastPriceUsdtSell,
         additionalBalances: externalBalanceEntries,
       });
 
@@ -856,25 +831,18 @@ export default function TransaccionesScreen() {
 
       const operationsResult: Operation[] = [];
 
-      // Iteramos cada asset (incluidos pares fiat) para construir la sugerencia adecuada.
+      // Iteramos cada activo rebalanceable para construir la sugerencia adecuada.
       for (const asset of assets) {
         const adjustedAllocation = adjustedAllocationByAssetId.get(asset._id ?? asset.symbol);
         const baseAllocation =
           adjustedAllocation != null
             ? adjustedAllocation
             : Math.max(asset.totalCapitalWhenLastAdded ?? 0, 0);
-        let allocation = Math.max(baseAllocation, 0);
-
-        if (asset.symbol === "USDTUSD") {
-          allocation = Math.max(totalUsdFromBalances + usdtUsdValue, 0);
-        } else if (asset.symbol === "USDPEN") {
-          allocation = Math.max(totalUsdFromBalances + penUsdValue, 0);
-        }
+        const allocation = Math.max(baseAllocation, 0);
         if (allocation <= ALLOCATION_EPSILON) continue;
 
-        // Separar par base/quote para entender cantidades en juego.
+        // Separar base/quote para entender cantidades en juego.
         const { baseAsset, quoteAsset } = splitSymbol(asset.symbol);
-        const isUsdtPair = asset.symbol === "USDTUSD";
 
         const rawExchange = asset.exchange ?? asset.exchangeName ?? null;
         const exchangeId =
@@ -895,21 +863,12 @@ export default function TransaccionesScreen() {
 
         let fetchedPrice: number | null;
         if (asset.type === "crypto") {
-          fetchedPrice = await fetchAssetPrice(
-            asset.symbol,
-            lastPriceUsdtSell,
-            usdToPen ?? 0
-          );
+          fetchedPrice = await fetchAssetPrice(asset.symbol);
         } else {
           // Para stocks/commodities usamos la tabla de precios externos (Yahoo, etc.).
           fetchedPrice = externalPriceMap.get(asset.symbol) ?? null;
           if (!fetchedPrice) {
-            fetchedPrice = await fetchExternalAssetPrice(
-              asset.symbol,
-              asset.type,
-              lastPriceUsdtSell,
-              penToUsd
-            );
+            fetchedPrice = await fetchExternalAssetPrice(asset.symbol, asset.type);
             if (fetchedPrice != null) {
               externalPriceMap.set(asset.symbol, fetchedPrice);
             }
@@ -917,9 +876,7 @@ export default function TransaccionesScreen() {
         }
 
         if (!fetchedPrice || fetchedPrice <= 0) {
-          if (!isUsdtPair) {
-            continue;
-          }
+          continue;
         }
 
         const stockHoldingValue = externalValueMap.get(asset.symbol) ?? 0;
@@ -944,8 +901,9 @@ export default function TransaccionesScreen() {
 
         // Slope controla qué fracción del capital debe permanecer en base/quote.
         const slopeFraction = (asset.slope ?? 0) / 100;
-        const baseHoldFraction = slopeFraction > 0 ? Math.min(slopeFraction, 1) : 0;
-        const quoteHoldFraction = slopeFraction < 0 ? Math.min(Math.abs(slopeFraction), 1) : 0;
+        const slopeHoldFraction = getSlopeHoldFraction(slopeFraction);
+        const baseHoldFraction = slopeFraction > 0 ? slopeHoldFraction : 0;
+        const quoteHoldFraction = slopeFraction < 0 ? slopeHoldFraction : 0;
 
         const baseHoldUsd = allocation * baseHoldFraction;
         const quoteHoldUsd = allocation * quoteHoldFraction;
@@ -957,11 +915,9 @@ export default function TransaccionesScreen() {
           {
             allowUpdates,
             priceLabel,
-            expectAction,
           }: {
             allowUpdates: boolean;
             priceLabel?: string;
-            expectAction?: "buy" | "sell";
           }
         ) => {
           // Tomamos el precio del escenario (override) o el market actual.
@@ -999,12 +955,13 @@ export default function TransaccionesScreen() {
           }
 
           // Valor actual de la cartera en base/quote para comparar con objetivo heurístico.
-          const actualBaseUsd = isUsdtPair ? baseHolding.amount * price : baseHolding.usdValue;
+          const actualBaseUsd = baseHolding.usdValue;
           const actualQuoteUsd = quoteHolding.usdValue;
 
           // Normalizamos el precio en el rango histórico para calcular ponderaciones.
-          const priceRange = maxPrice - minPrice;
-          const normalized = priceRange === 0 ? 0.5 : clamp((price - minPrice) / priceRange, 0, 1);
+          const decisionLow = getDecisionLow(minPrice, maxPrice, slopeFraction);
+          const priceRange = maxPrice - decisionLow;
+          const normalized = priceRange === 0 ? 0.5 : clamp((price - decisionLow) / priceRange, 0, 1);
           let baseShare = 1 - normalized;
           baseShare = clamp(baseShare, 0, 1);
           const desiredBaseUsd = allocation * baseShare;
@@ -1021,9 +978,6 @@ export default function TransaccionesScreen() {
             maxBaseAllowed,
           });
           const action: "buy" | "sell" = baseDiffUsd > 0 ? "buy" : "sell";
-
-          // Si se espera una acción específica (solo USDTUSD/P2P), descarta la contraria
-          if (expectAction && action !== expectAction) return;
 
           if (Math.abs(baseDiffUsd) <= BASE_TOLERANCE) {
             return;
@@ -1056,13 +1010,9 @@ export default function TransaccionesScreen() {
           let actionMessage: string;
 
           if (baseDiffUsd > 0) {
-            actionMessage = isUsdtPair
-              ? `Comprar ${absBaseAmount.toFixed(6)} ${baseAsset} (~${approxLabel}) usando ${quoteAsset} a $${price.toFixed(4)} (PrecioCompraUSDT).`
-              : `Comprar ${absBaseAmount.toFixed(6)} ${baseAsset} (~${approxLabel}) usando ${quoteAsset}.`;
+            actionMessage = `Comprar ${absBaseAmount.toFixed(6)} ${baseAsset} (~${approxLabel}) usando ${quoteAsset}.`;
           } else {
-            actionMessage = isUsdtPair
-              ? `Vender ${absBaseAmount.toFixed(6)} ${baseAsset} (~${approxLabel}) por ${quoteAsset} a $${price.toFixed(4)} (PrecioVentaUSDT).`
-              : `Vender ${absBaseAmount.toFixed(6)} ${baseAsset} (~${approxLabel}) por ${quoteAsset}.`;
+            actionMessage = `Vender ${absBaseAmount.toFixed(6)} ${baseAsset} (~${approxLabel}) por ${quoteAsset}.`;
           }
 
           const suggestedBaseAmount = absBaseAmount;
@@ -1088,8 +1038,6 @@ export default function TransaccionesScreen() {
             price,
             priceLabel,
             slopeSign,
-            buyPrice: isUsdtPair ? usdtBuyPrice ?? undefined : undefined,
-            sellPrice: isUsdtPair ? usdtSellPrice ?? undefined : undefined,
             suggestedBaseAmount,
             suggestedFiatValue: quoteValue,
             targetBaseUsd,
@@ -1113,26 +1061,9 @@ export default function TransaccionesScreen() {
           operationsResult.push(operation);
         };
 
-        if (isUsdtPair) {
-          if (usdtBuyPrice != null) {
-            await evaluateScenario(usdtBuyPrice, {
-              allowUpdates: true,
-              priceLabel: "PrecioCompraUSDT",
-              expectAction: "buy",
-            });
-          }
-          if (usdtSellPrice != null) {
-            await evaluateScenario(usdtSellPrice, {
-              allowUpdates: false,
-              priceLabel: "PrecioVentaUSDT",
-              expectAction: "sell",
-            });
-          }
-        } else {
-          await evaluateScenario(fetchedPrice, {
-            allowUpdates: true,
-          });
-        }
+        await evaluateScenario(fetchedPrice, {
+          allowUpdates: true,
+        });
       }
 
       const adjustedOperations = operationsResult
@@ -1165,7 +1096,6 @@ export default function TransaccionesScreen() {
       const price = Number(overridePrice);
       const baseUpper = op.baseAsset?.toUpperCase?.() ?? op.baseAsset;
       const quoteUpper = op.quoteAsset?.toUpperCase?.() ?? op.quoteAsset;
-      const isUsdtPair = op.symbol === "USDTUSD";
 
       let min = Number.isFinite(op.minPrice) ? (op.minPrice as number) : price;
       let max = Number.isFinite(op.maxPrice) ? (op.maxPrice as number) : price;
@@ -1195,8 +1125,9 @@ export default function TransaccionesScreen() {
 
       const actualQuoteUsd = quoteHoldingUsd;
 
-      const priceRange = max - min;
-      const normalized = priceRange === 0 ? 0.5 : clamp((price - min) / priceRange, 0, 1);
+      const decisionLow = getDecisionLow(min, max, op.slopeFraction ?? 0);
+      const priceRange = max - decisionLow;
+      const normalized = priceRange === 0 ? 0.5 : clamp((price - decisionLow) / priceRange, 0, 1);
       let baseShare = clamp(1 - normalized, 0, 1);
       const desiredBaseUsd = allocation * baseShare;
       const {
@@ -1258,16 +1189,11 @@ export default function TransaccionesScreen() {
           ? `$${Math.abs(baseDiffUsd).toFixed(2)}`
           : `${suggestedFiatValue.toFixed(2)} ${quoteUpper}`;
 
-      const usdtLabel = action === "buy" ? "PrecioCompraUSDT" : "PrecioVentaUSDT";
       let actionMessage: string;
       if (action === "buy") {
-        actionMessage = isUsdtPair
-          ? `Comprar ${suggestedBaseAmount.toFixed(6)} ${op.baseAsset} (~${approxLabel}) usando ${op.quoteAsset} a $${price.toFixed(4)} (${usdtLabel}).`
-          : `Comprar ${suggestedBaseAmount.toFixed(6)} ${op.baseAsset} (~${approxLabel}) usando ${op.quoteAsset}.`;
+        actionMessage = `Comprar ${suggestedBaseAmount.toFixed(6)} ${op.baseAsset} (~${approxLabel}) usando ${op.quoteAsset}.`;
       } else {
-        actionMessage = isUsdtPair
-          ? `Vender ${suggestedBaseAmount.toFixed(6)} ${op.baseAsset} (~${approxLabel}) por ${op.quoteAsset} a $${price.toFixed(4)} (${usdtLabel}).`
-          : `Vender ${suggestedBaseAmount.toFixed(6)} ${op.baseAsset} (~${approxLabel}) por ${op.quoteAsset}.`;
+        actionMessage = `Vender ${suggestedBaseAmount.toFixed(6)} ${op.baseAsset} (~${approxLabel}) por ${op.quoteAsset}.`;
       }
 
       const simulatedOp: Operation = {
@@ -1923,12 +1849,6 @@ export default function TransaccionesScreen() {
               <Text style={styles.detail}>
                 {op.priceLabel ?? "Precio actual"}: ${op.price.toFixed(4)}
               </Text>
-              {op.symbol === "USDTUSD" && (
-                <Text style={styles.detail}>
-                  Precio compra USDT: ${op.buyPrice?.toFixed(4) ?? "N/D"} | Precio venta USDT: $
-                  {op.sellPrice?.toFixed(4) ?? "N/D"}
-                </Text>
-              )}
               <Text style={styles.action}>{op.actionMessage}</Text>
 
               {isActionSupported ? (
@@ -2482,20 +2402,8 @@ function splitSymbol(symbol: string): { baseAsset: string; quoteAsset: string } 
   return { baseAsset: symbol, quoteAsset: "USD" };
 }
 
-// fetchAssetPrice: obtiene precios spot desde Binance o calcula conversiones básicas fiat.
-async function fetchAssetPrice(
-  symbol: string,
-  lastPriceUsdtSell: number,
-  usdToPen: number
-): Promise<number | null> {
-  if (symbol === "USDTUSD") {
-    return lastPriceUsdtSell || 1;
-  }
-
-  if (symbol === "USDPEN") {
-    return usdToPen ? 1 / usdToPen : null;
-  }
-
+// fetchAssetPrice: obtiene precios spot desde Binance para pares crypto.
+async function fetchAssetPrice(symbol: string): Promise<number | null> {
   try {
     const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`);
     if (!res.ok) return null;
@@ -2508,37 +2416,14 @@ async function fetchAssetPrice(
   }
 }
 
-// fetchExternalAssetPrice: precios para activos no-crypto (acciones, commodities, fiat).
-async function fetchExternalAssetPrice(
-  symbol: string,
-  type: string,
-  lastPriceUsdtSell: number,
-  penToUsd: number
-): Promise<number | null> {
+// fetchExternalAssetPrice: precios para activos no-crypto (acciones, commodities).
+async function fetchExternalAssetPrice(symbol: string, type: string): Promise<number | null> {
   if (type === "stock") {
     return fetchStockRegularPrice(symbol);
   }
 
   if (type === "commodity") {
     return fetchCommodityPrice(symbol);
-  }
-
-  if (type === "fiat" && (symbol === "USDTUSD" || symbol === "USDPEN")) {
-    if (symbol === "USDTUSD") {
-      return lastPriceUsdtSell;
-    }
-    try {
-      if (penToUsd) {
-        return penToUsd ? 1 / penToUsd : null;
-      }
-      const res = await fetch("https://open.er-api.com/v6/latest/USD");
-      const data = await res.json();
-      const penRate = data?.rates?.PEN;
-      return typeof penRate === "number" ? penRate : null;
-    } catch (err) {
-      console.warn("No se pudo obtener precio para USDPEN", err);
-      return null;
-    }
   }
 
   return null;
@@ -2647,6 +2532,28 @@ function getHoldingData(
 // clamp: limita un valor al rango [min, max].
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+const SLOPE_LOW_LIMIT = 0.6;
+
+function getSlopeHoldFraction(slopeFraction: number) {
+  if (!Number.isFinite(slopeFraction) || slopeFraction === 0) return 0;
+  return Math.min(1, Math.sqrt(Math.abs(slopeFraction)));
+}
+
+function getDecisionLow(low: number, high: number, slopeFraction: number) {
+  if (
+    !Number.isFinite(low) ||
+    !Number.isFinite(high) ||
+    high <= low ||
+    !Number.isFinite(slopeFraction) ||
+    slopeFraction <= 0
+  ) {
+    return low;
+  }
+
+  const adjustment = clamp(slopeFraction, 0, SLOPE_LOW_LIMIT);
+  return low + (high - low) * adjustment;
 }
 
 function applySlopeHoldThreshold({

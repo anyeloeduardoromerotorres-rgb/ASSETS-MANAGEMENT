@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "dev": "nodemon src/index.js",
-    "start": "node index.js"
+    "start": "node index.js",
+    "backtest": "node src/scripts/backtestStrategy.js",
+    "backtest:symbols": "node src/scripts/backtestSymbols.js"
   },
   "engines": {
     "node": ">=20"
