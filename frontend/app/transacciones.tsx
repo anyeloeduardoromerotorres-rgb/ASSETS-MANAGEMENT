@@ -745,6 +745,11 @@ export default function TransaccionesScreen() {
           externalPriceMap.set(symbol, price);
         }
       });
+      const shvTotal = getConfigNumber("totalSHV") ?? 0;
+      const shvPrice = await fetchExternalAssetPrice("SHV", "stock");
+      if (shvPrice != null && !Number.isNaN(shvPrice)) {
+        externalPriceMap.set("SHV", shvPrice);
+      }
 
       // Calculamos cuánto valen las posiciones estáticas registradas para esos assets.
       const externalHoldingsInfo = nonCryptoAssets.map(asset => {
@@ -780,6 +785,13 @@ export default function TransaccionesScreen() {
           total: typeof info.amount === "number" ? info.amount : 0,
           usdValue: info.usdValue as number,
         }));
+      if (shvTotal > 0 && shvPrice != null && shvPrice > 0) {
+        externalBalanceEntries.push({
+          asset: "SHV",
+          total: shvTotal,
+          usdValue: shvTotal * shvPrice,
+        });
+      }
 
       const designatedTotal = rebalancedAssets.reduce(
         (acc, asset) => acc + (asset.totalCapitalWhenLastAdded ?? 0),
