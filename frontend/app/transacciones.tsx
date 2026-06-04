@@ -999,8 +999,8 @@ export default function TransaccionesScreen() {
           const actualQuoteUsd = quoteHolding.usdValue;
 
           // Normalizamos el precio en el rango histórico para calcular ponderaciones.
-          const decisionLow = getDecisionLow(minPrice, maxPrice, slopeFraction);
-          const priceRange = maxPrice - decisionLow;
+          const { decisionLow, decisionHigh } = getDecisionBounds(minPrice, maxPrice, slopeFraction);
+          const priceRange = decisionHigh - decisionLow;
           const normalized = priceRange === 0 ? 0.5 : clamp((price - decisionLow) / priceRange, 0, 1);
           let baseShare = 1 - normalized;
           baseShare = clamp(baseShare, 0, 1);
@@ -1165,8 +1165,8 @@ export default function TransaccionesScreen() {
 
       const actualQuoteUsd = quoteHoldingUsd;
 
-      const decisionLow = getDecisionLow(min, max, op.slopeFraction ?? 0);
-      const priceRange = max - decisionLow;
+      const { decisionLow, decisionHigh } = getDecisionBounds(min, max, op.slopeFraction ?? 0);
+      const priceRange = decisionHigh - decisionLow;
       const normalized = priceRange === 0 ? 0.5 : clamp((price - decisionLow) / priceRange, 0, 1);
       let baseShare = clamp(1 - normalized, 0, 1);
       const desiredBaseUsd = allocation * baseShare;
@@ -2605,19 +2605,31 @@ function getSlopeHoldFraction(slopeFraction: number) {
   return Math.min(1, Math.sqrt(Math.abs(slopeFraction)));
 }
 
-function getDecisionLow(low: number, high: number, slopeFraction: number) {
+function getDecisionBounds(low: number, high: number, slopeFraction: number) {
   if (
     !Number.isFinite(low) ||
     !Number.isFinite(high) ||
     high <= low ||
     !Number.isFinite(slopeFraction) ||
-    slopeFraction <= 0
+    slopeFraction === 0
   ) {
-    return low;
+    return { decisionLow: low, decisionHigh: high };
   }
 
-  const adjustment = clamp(slopeFraction, 0, SLOPE_LOW_LIMIT);
-  return low + (high - low) * adjustment;
+  const adjustment = clamp(Math.abs(slopeFraction), 0, SLOPE_LOW_LIMIT);
+  const rangeAdjustment = (high - low) * adjustment;
+
+  if (slopeFraction > 0) {
+    return {
+      decisionLow: low + rangeAdjustment,
+      decisionHigh: high,
+    };
+  }
+
+  return {
+    decisionLow: low,
+    decisionHigh: high - rangeAdjustment,
+  };
 }
 
 function applySlopeHoldThreshold({

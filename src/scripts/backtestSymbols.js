@@ -39,6 +39,8 @@ function parseArgs(argv) {
     cryptoFee: 0,
     otherFee: 0,
     symbols: DEFAULT_SYMBOLS,
+    cashYieldSymbol: null,
+    dividendTax: 0.3,
   };
 
   for (const arg of argv) {
@@ -59,6 +61,8 @@ function parseArgs(argv) {
     if (key === "crypto-fee") args.cryptoFee = Number(rawValue);
     if (key === "other-fee") args.otherFee = Number(rawValue);
     if (key === "symbols") args.symbols = rawValue.split(",").map(item => item.trim()).filter(Boolean);
+    if (key === "cash-yield-symbol") args.cashYieldSymbol = rawValue.toUpperCase();
+    if (key === "dividend-tax") args.dividendTax = Number(rawValue);
   }
 
   return args;
@@ -177,6 +181,38 @@ async function fetchYahooDailyCandles(symbol) {
   return normalizeCandles(candles);
 }
 
+async function fetchYahooDividends(symbol, startDate, endDate) {
+  const period1 = Math.floor(toUtcDay(startDate).getTime() / 1000);
+  const period2 = Math.floor((toUtcDay(endDate).getTime() + DAY_MS) / 1000);
+  const res = await axios.get(
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&period1=${period1}&period2=${period2}&events=div`,
+    { timeout: 30000 }
+  );
+  const result = res.data?.chart?.result?.[0];
+  const timestamps = result?.timestamp ?? [];
+  const closes = result?.indicators?.quote?.[0]?.close ?? [];
+  const dividends = result?.events?.dividends ?? {};
+  const priceByDay = new Map();
+
+  timestamps.forEach((timestamp, index) => {
+    const close = Number(closes[index]);
+    if (Number.isFinite(close) && close > 0) {
+      priceByDay.set(toUtcDay(timestamp * 1000).getTime(), close);
+    }
+  });
+
+  return Object.values(dividends)
+    .map(dividend => {
+      const date = toUtcDay(Number(dividend.date) * 1000);
+      const amount = Number(dividend.amount);
+      const price = priceByDay.get(date.getTime()) ?? null;
+      if (!Number.isFinite(amount) || amount <= 0 || !price) return null;
+      return { date, amount, price, yieldFraction: amount / price };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
+}
+
 async function fetchCandles(symbol) {
   return isCryptoSymbol(symbol)
     ? fetchBinanceDailyCandles(symbol)
@@ -275,6 +311,33 @@ function getDecisionLow(low, high, slopeFraction, slopeLowLimit) {
   return low + (high - low) * clamp(slopeFraction, 0, slopeLowLimit);
 }
 
+function getDecisionBounds(low, high, slopeFraction, slopeLowLimit) {
+  if (
+    !Number.isFinite(low) ||
+    !Number.isFinite(high) ||
+    high <= low ||
+    !Number.isFinite(slopeFraction) ||
+    slopeLowLimit <= 0
+  ) {
+    return { decisionLow: low, decisionHigh: high };
+  }
+
+  const adjustment = clamp(Math.abs(slopeFraction), 0, slopeLowLimit);
+  if (slopeFraction > 0) {
+    return {
+      decisionLow: low + (high - low) * adjustment,
+      decisionHigh: high,
+    };
+  }
+  if (slopeFraction < 0) {
+    return {
+      decisionLow: low,
+      decisionHigh: high - (high - low) * adjustment,
+    };
+  }
+  return { decisionLow: low, decisionHigh: high };
+}
+
 function getSlopeHoldFraction(slopeFraction, mode) {
   const absFraction = Math.min(Math.abs(slopeFraction), 1);
   if (mode === "sqrt") return Math.sqrt(absFraction);
@@ -282,12 +345,15 @@ function getSlopeHoldFraction(slopeFraction, mode) {
   return absFraction;
 }
 
-function runBacktest({ symbol, candles, capital, years, slopeLowLimit, minTradeUsd, slopeHoldMode }) {
+function runBacktest({ symbol, candles, capital, years, slopeLowLimit, minTradeUsd, slopeHoldMode, cashYieldEvents = [], dividendTax = 0.3 }) {
   const type = isCryptoSymbol(symbol) ? "crypto" : "stock";
   const startDate = addYears(candles[0].closeTime, years);
   const endDate = candles[candles.length - 1].closeTime;
   const testCandles = candles.filter(c => c.closeTime >= startDate && c.closeTime <= endDate);
   if (testCandles.length < 2) throw new Error(`${symbol}: historial insuficiente`);
+  const eligibleCashYieldEvents = cashYieldEvents.filter(
+    event => event.date.getTime() >= testCandles[0].closeTime.getTime()
+  );
 
   let baseUnits = 0;
   let quoteUsd = capital;
@@ -296,8 +362,15 @@ function runBacktest({ symbol, candles, capital, years, slopeLowLimit, minTradeU
   let sells = 0;
   let slopeSum = 0;
   let slopeCount = 0;
+  let cashYieldEventIndex = 0;
+  let cashYieldUsd = 0;
 
   for (const candle of testCandles) {
+    const yieldResult = applyCashYield(quoteUsd, eligibleCashYieldEvents, cashYieldEventIndex, candle.closeTime, dividendTax);
+    quoteUsd = yieldResult.cash;
+    cashYieldEventIndex = yieldResult.eventIndex;
+    cashYieldUsd += yieldResult.earned;
+
     const price = candle.close;
     const indicators = calculateRollingHighLow(candles, candle.closeTime, years);
     if (!indicators) continue;
@@ -314,8 +387,8 @@ function runBacktest({ symbol, candles, capital, years, slopeLowLimit, minTradeU
     const baseHoldUsd = allocation * baseHoldFraction;
     const quoteHoldUsd = allocation * quoteHoldFraction;
     const maxBaseAllowed = Math.max(allocation - quoteHoldUsd, 0);
-    const decisionLow = getDecisionLow(indicators.low, indicators.high, slopeFraction, slopeLowLimit);
-    const priceRange = indicators.high - decisionLow;
+    const { decisionLow, decisionHigh } = getDecisionBounds(indicators.low, indicators.high, slopeFraction, slopeLowLimit);
+    const priceRange = decisionHigh - decisionLow;
     const normalized = priceRange === 0 ? 0.5 : clamp((price - decisionLow) / priceRange, 0, 1);
     const desiredBaseUsd = allocation * clamp(1 - normalized, 0, 1);
     const { baseDiffUsd } = applySlopeHoldThreshold({
@@ -363,6 +436,7 @@ function runBacktest({ symbol, candles, capital, years, slopeLowLimit, minTradeU
     trades,
     buys,
     sells,
+    cashYieldUsd,
   };
 }
 
@@ -420,6 +494,25 @@ function feeRateForSymbol(symbol, cryptoFee, otherFee) {
   return isCryptoSymbol(symbol) ? cryptoFee : otherFee;
 }
 
+function applyCashYield(cash, cashYieldEvents, eventIndex, date, dividendTax) {
+  let nextIndex = eventIndex;
+  let nextCash = cash;
+  let earned = 0;
+  while (
+    nextIndex < cashYieldEvents.length &&
+    cashYieldEvents[nextIndex].date.getTime() <= date.getTime()
+  ) {
+    const event = cashYieldEvents[nextIndex];
+    if (nextCash > BASE_TOLERANCE) {
+      const dividendUsd = nextCash * event.yieldFraction * (1 - dividendTax);
+      nextCash += dividendUsd;
+      earned += dividendUsd;
+    }
+    nextIndex += 1;
+  }
+  return { cash: nextCash, eventIndex: nextIndex, earned };
+}
+
 function runPortfolioSlopeAllocation({
   assetData,
   capital,
@@ -431,6 +524,8 @@ function runPortfolioSlopeAllocation({
   rebalance,
   cryptoFee,
   otherFee,
+  cashYieldEvents = [],
+  dividendTax = 0.3,
 }) {
   const automaticStart = new Date(Math.max(...assetData.map(item => addYears(item.candles[0].closeTime, minHistoryYears).getTime())));
   const automaticEnd = new Date(Math.min(...assetData.map(item => item.candles.at(-1).closeTime.getTime())));
@@ -446,9 +541,14 @@ function runPortfolioSlopeAllocation({
   const stats = new Map(assetData.map(item => [item.symbol, { trades: 0, buys: 0, sells: 0, buyHoldPct: 0 }]));
   const tradeLog = [];
   let cash = capital;
+  let cashYieldEventIndex = 0;
+  let cashYieldUsd = 0;
   let lastPrices = new Map();
   const firstDate = dates[0];
   const lastDate = dates.at(-1);
+  const eligibleCashYieldEvents = cashYieldEvents.filter(
+    event => event.date.getTime() >= firstDate.getTime()
+  );
   const initialSlopeRows = assetData.map(item => ({
     symbol: item.symbol,
     slope: Math.max(calculateSlope(item.candles, firstDate, years, isCryptoSymbol(item.symbol) ? "crypto" : "stock"), 0),
@@ -466,6 +566,11 @@ function runPortfolioSlopeAllocation({
   }
 
   for (const date of dates) {
+    const yieldResult = applyCashYield(cash, eligibleCashYieldEvents, cashYieldEventIndex, date, dividendTax);
+    cash = yieldResult.cash;
+    cashYieldEventIndex = yieldResult.eventIndex;
+    cashYieldUsd += yieldResult.earned;
+
     const prices = new Map();
     const slopeRows = [];
     for (const item of assetData) {
@@ -552,7 +657,7 @@ function runPortfolioSlopeAllocation({
     };
   });
 
-  return { results, tradeLog, finalValue, cash, firstDate, lastDate };
+  return { results, tradeLog, finalValue, cash, firstDate, lastDate, cashYieldUsd };
 }
 
 function getMomentumReturn(candles, asOfDate, years) {
@@ -575,6 +680,8 @@ function runPortfolioDynamicAllocation({
   rebalance,
   cryptoFee,
   otherFee,
+  cashYieldEvents = [],
+  dividendTax = 0.3,
 }) {
   const automaticStart = new Date(Math.max(...assetData.map(item => addYears(item.candles[0].closeTime, minHistoryYears).getTime())));
   const automaticEnd = new Date(Math.min(...assetData.map(item => item.candles.at(-1).closeTime.getTime())));
@@ -588,9 +695,14 @@ function runPortfolioDynamicAllocation({
   const holdings = new Map(assetData.map(item => [item.symbol, 0]));
   const stats = new Map(assetData.map(item => [item.symbol, { trades: 0, buys: 0, sells: 0, buyHoldPct: 0 }]));
   let cash = capital;
+  let cashYieldEventIndex = 0;
+  let cashYieldUsd = 0;
   let lastPrices = new Map();
   const firstDate = dates[0];
   const lastDate = dates.at(-1);
+  const eligibleCashYieldEvents = cashYieldEvents.filter(
+    event => event.date.getTime() >= firstDate.getTime()
+  );
   const baseWeight = 1 / assetData.length;
 
   for (const item of assetData) {
@@ -600,6 +712,11 @@ function runPortfolioDynamicAllocation({
   }
 
   for (const date of dates) {
+    const yieldResult = applyCashYield(cash, eligibleCashYieldEvents, cashYieldEventIndex, date, dividendTax);
+    cash = yieldResult.cash;
+    cashYieldEventIndex = yieldResult.eventIndex;
+    cashYieldUsd += yieldResult.earned;
+
     const prices = new Map();
     const signalRows = [];
     for (const item of assetData) {
@@ -656,8 +773,8 @@ function runPortfolioDynamicAllocation({
       const baseHoldUsd = bucketAllocation * baseHoldFraction;
       const quoteHoldUsd = bucketAllocation * quoteHoldFraction;
       const maxBaseAllowed = Math.max(bucketAllocation - quoteHoldUsd, 0);
-      const decisionLow = getDecisionLow(low, high, slopeFraction, slopeLowLimit);
-      const priceRange = high - decisionLow;
+      const { decisionLow, decisionHigh } = getDecisionBounds(low, high, slopeFraction, slopeLowLimit);
+      const priceRange = decisionHigh - decisionLow;
       const normalized = priceRange === 0 ? 0.5 : clamp((price - decisionLow) / priceRange, 0, 1);
       const desiredBaseUsd = bucketAllocation * clamp(1 - normalized, 0, 1);
       const actualUsd = (holdings.get(item.symbol) ?? 0) * price;
@@ -719,7 +836,7 @@ function runPortfolioDynamicAllocation({
       trades: rowStats.trades,
     };
   });
-  return { results, finalValue, cash, firstDate, lastDate };
+  return { results, finalValue, cash, firstDate, lastDate, cashYieldUsd };
 }
 
 function printTable(rows) {
@@ -760,6 +877,14 @@ async function main() {
     }
   }
 
+  const cashYieldEvents = args.cashYieldSymbol && results.length
+    ? await fetchYahooDividends(
+        args.cashYieldSymbol,
+        new Date(Math.min(...results.map(item => item.candles[0].closeTime.getTime()))),
+        new Date(Math.max(...results.map(item => item.candles.at(-1).closeTime.getTime())))
+      )
+    : [];
+
   if (args.portfolioSlopeAllocation || args.portfolioDynamicAllocation) {
     const runner = args.portfolioSlopeAllocation ? runPortfolioSlopeAllocation : runPortfolioDynamicAllocation;
     const backtest = runner({
@@ -775,12 +900,19 @@ async function main() {
       otherFee: args.otherFee,
       slopeLowLimit: args.slopeLowLimit,
       slopeHoldMode: args.slopeHoldMode,
+      cashYieldEvents,
+      dividendTax: args.dividendTax,
     });
     const strategyPct = (backtest.finalValue / args.capital - 1) * 100;
     console.log("");
     console.log(`${args.portfolioSlopeAllocation ? "Portfolio slope allocation" : "Portfolio dynamic allocation"}: ${formatDate(backtest.firstDate)} -> ${formatDate(backtest.lastDate)}`);
     console.log(`Rebalance: ${args.rebalance}. Crypto fee: ${(args.cryptoFee * 100).toFixed(4)}%. Other fee: ${(args.otherFee * 100).toFixed(4)}%`);
     console.log(`Final: $${backtest.finalValue.toFixed(2)} Retorno: ${formatPercent(strategyPct)} Cash: $${backtest.cash.toFixed(2)}`);
+    if (args.cashYieldSymbol) {
+      console.log(
+        `Rendimiento neto cash ${args.cashYieldSymbol}: $${(backtest.cashYieldUsd ?? 0).toFixed(2)} (${cashYieldEvents.length} eventos, impuesto ${(args.dividendTax * 100).toFixed(2)}%)`
+      );
+    }
     printTable(backtest.results.map(row => ({
       symbol: row.symbol,
       start: row.firstDate ?? row.start,
@@ -833,11 +965,20 @@ async function main() {
     return;
   }
 
-  const independentResults = results.map(item => runBacktest({ symbol: item.symbol, candles: item.candles, ...args }));
+  const independentResults = results.map(item => runBacktest({
+    symbol: item.symbol,
+    candles: item.candles,
+    ...args,
+    cashYieldEvents,
+    dividendTax: args.dividendTax,
+  }));
   console.log("");
   console.log(
     `Backtest independiente por activo: capital $${args.capital}, years=${args.years}, slope-low-limit=${args.slopeLowLimit}, slope-hold-mode=${args.slopeHoldMode}`
   );
+  if (args.cashYieldSymbol) {
+    console.log(`Cash inactivo en ${args.cashYieldSymbol}: ${cashYieldEvents.length} eventos, impuesto ${(args.dividendTax * 100).toFixed(2)}%`);
+  }
   printTable(independentResults.sort((a, b) => b.strategyPct - a.strategyPct));
 }
 
