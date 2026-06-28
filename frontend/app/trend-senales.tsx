@@ -333,6 +333,22 @@ export default function TrendRunnerSignalsScreen() {
     }
   };
 
+  const testBackendConnection = async () => {
+    try {
+      const res = await api.get("/health");
+      Alert.alert(
+        "Backend conectado",
+        `Respuesta: ${res.data?.status ?? "ok"}`
+      );
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const message = status
+        ? `Backend respondio con status ${status}.`
+        : error?.message ?? "No se pudo conectar al backend.";
+      Alert.alert("Error conexion", message);
+    }
+  };
+
   if (loading && !refreshing) {
     return (
       <View style={styles.center}>
@@ -382,6 +398,9 @@ export default function TrendRunnerSignalsScreen() {
       </TouchableOpacity>
       <TouchableOpacity style={styles.testButton} onPress={sendPushTest}>
         <Text style={styles.actionText}>Enviar push de prueba</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.connectionButton} onPress={testBackendConnection}>
+        <Text style={styles.actionText}>Probar conexion backend</Text>
       </TouchableOpacity>
 
       <View style={styles.filterRow}>
@@ -537,6 +556,7 @@ const styles = StyleSheet.create({
   secondaryButton: { backgroundColor: "#2e7d32" },
   fullButton: { backgroundColor: "#455a64", borderRadius: 8, paddingVertical: 10, alignItems: "center", marginBottom: 12 },
   testButton: { backgroundColor: "#6a1b9a", borderRadius: 8, paddingVertical: 10, alignItems: "center", marginBottom: 12 },
+  connectionButton: { backgroundColor: "#00838f", borderRadius: 8, paddingVertical: 10, alignItems: "center", marginBottom: 12 },
   disabledButton: { opacity: 0.55 },
   actionText: { color: "#fff", fontWeight: "700", textAlign: "center" },
   filterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
