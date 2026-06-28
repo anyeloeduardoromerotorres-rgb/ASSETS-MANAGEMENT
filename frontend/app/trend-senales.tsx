@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
-import api from "../constants/api";
+import api, { API_BASE_URL, API_DEBUG_INFO } from "../constants/api";
 
 type TrendSignal = {
   _id: string;
@@ -335,10 +335,17 @@ export default function TrendRunnerSignalsScreen() {
 
   const testBackendConnection = async () => {
     try {
+      const fetchUrl = `${API_BASE_URL.replace(/\/$/, "")}/health`;
+      const fetchResponse = await fetch(fetchUrl);
+      const fetchText = await fetchResponse.text();
       const res = await api.get("/health");
       Alert.alert(
         "Backend conectado",
-        `Respuesta: ${res.data?.status ?? "ok"}`
+        [
+          `URL: ${API_BASE_URL}`,
+          `fetch: ${fetchResponse.status} ${fetchText}`,
+          `axios: ${res.data?.status ?? "ok"}`,
+        ].join("\n")
       );
     } catch (error: any) {
       const status = error?.response?.status;
@@ -363,6 +370,8 @@ export default function TrendRunnerSignalsScreen() {
 
       <View style={styles.capitalBox}>
         <Text style={styles.capitalTitle}>Capital disponible</Text>
+        <Text style={styles.apiText}>API: {API_DEBUG_INFO.apiBaseUrl}</Text>
+        <Text style={styles.apiText}>ENV: {API_DEBUG_INFO.configuredEnvUrl ?? "-"}</Text>
         <Text style={styles.capitalText}>
           Acciones/ETFs: ${fmt(capital?.stocks?.availableCashUsd)} · USD libre ${fmt(capital?.stocks?.availableUsdAfterOpen)} · SHV ${fmt(capital?.stocks?.shvUsd)}
         </Text>
@@ -551,6 +560,7 @@ const styles = StyleSheet.create({
   capitalBox: { padding: 12, borderRadius: 12, backgroundColor: "#f1f8e9", gap: 4, marginBottom: 12 },
   capitalTitle: { fontSize: 15, fontWeight: "700", color: "#1b5e20" },
   capitalText: { fontSize: 13, color: "#344" },
+  apiText: { fontSize: 12, color: "#455a64" },
   actionsRow: { flexDirection: "row", gap: 8, marginBottom: 8 },
   actionButton: { flex: 1, backgroundColor: "#1976d2", borderRadius: 8, paddingVertical: 10, alignItems: "center" },
   secondaryButton: { backgroundColor: "#2e7d32" },

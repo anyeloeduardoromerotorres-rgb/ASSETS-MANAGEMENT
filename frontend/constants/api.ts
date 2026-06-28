@@ -49,7 +49,14 @@ function getDevApiBaseUrl() {
   return `http://localhost:${LOCAL_API_PORT}/api`;
 }
 
-const API_BASE_URL = __DEV__ ? getDevApiBaseUrl() : PRODUCTION_API_URL;
+export const API_BASE_URL = __DEV__ ? getDevApiBaseUrl() : PRODUCTION_API_URL;
+
+export const API_DEBUG_INFO = {
+  apiBaseUrl: API_BASE_URL,
+  configuredEnvUrl: process.env.EXPO_PUBLIC_API_URL ?? null,
+  isDev: __DEV__,
+  platform: Platform.OS,
+};
 
 const api = create({
   baseURL: API_BASE_URL,
