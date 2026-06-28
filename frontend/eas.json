@@ -9,6 +9,9 @@
     },
     "local-apk": {
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://192.168.18.38:3000/api"
+      },
       "android": {
         "buildType": "apk"
       }

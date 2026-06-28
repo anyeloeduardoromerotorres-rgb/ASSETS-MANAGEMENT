@@ -306,12 +306,29 @@ export default function TrendRunnerSignalsScreen() {
 
   const sendPushTest = async () => {
     try {
-      await api.post("/trend-runner/push-test");
-      Alert.alert("Push enviada", "Si el token esta registrado, deberia llegar al telefono.");
+      const res = await api.post("/trend-runner/push-test");
+      const sent = Number(res.data?.sent ?? 0);
+      if (sent === 0) {
+        Alert.alert(
+          "Sin token activo",
+          "El backend respondio, pero todavia no hay token push registrado."
+        );
+      } else {
+        Alert.alert(
+          "Push enviada",
+          "Si el token esta registrado, deberia llegar al telefono."
+        );
+      }
     } catch (error: any) {
+      const status = error?.response?.status;
+      const backendMessage = error?.response?.data?.error;
+      const message = backendMessage
+        ?? (status ? `Backend respondio con status ${status}.` : error?.message)
+        ?? "No se pudo enviar la notificacion de prueba.";
+
       Alert.alert(
         "Error push",
-        error?.response?.data?.error ?? "No se pudo enviar la notificacion de prueba."
+        message
       );
     }
   };
