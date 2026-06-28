@@ -6,6 +6,7 @@ import api from "../constants/api";
 import { CONFIG_INFO_INITIAL_ID } from "../constants/config";
 import { computeXIRR } from "../utils/xirrmanual"; // tu función XIRR
 import { calculateTotalBalances } from "../utils/calculateTotalBalances";
+import TrendRunnerTemporaryBalances from "../components/TrendRunnerTemporaryBalances";
 
 /** Representa un flujo de caja (depósito, retiro, inversión inicial, etc.) */
 type CashFlow = { amount: number; when: Date };
@@ -909,6 +910,8 @@ export default function PrediccionScreen() {
               ? `Rentabilidad ${xirr * 100 >= 0 ? "" : "-"}${(xirr * 100).toFixed(2)}%`
               : "No se pudo calcular"}
           </Text>
+
+          <TrendRunnerTemporaryBalances title="Trend Runner temporal" />
 
           <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>Inicio de año</Text>

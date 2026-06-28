@@ -10,6 +10,7 @@ import binanceRoutes from "./routes/binance.routes.js";
 import configInfoRoutes from "./routes/configInfo.route.js";
 import transactionRoutes from "./routes/transaction.route.js";
 import capitalHistoryRoutes from "./routes/capitalHistory.route.js";
+import trendRunnerRoutes from "./routes/trendRunner.route.js";
 
 const app = express();
 
@@ -45,6 +46,7 @@ app.use('/api', exchange)
 app.use("/api", quoteRoutes);
 app.use("/api/binance", binanceRoutes);
 app.use("/api/transactions", transactionRoutes);
+app.use("/api/trend-runner", trendRunnerRoutes);
 
 
 

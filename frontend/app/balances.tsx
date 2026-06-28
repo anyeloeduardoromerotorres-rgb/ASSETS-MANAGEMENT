@@ -10,6 +10,7 @@ import {
 import { useFocusEffect } from "@react-navigation/native";
 import api from "../constants/api";
 import { calculateTotalBalances } from "../utils/calculateTotalBalances";
+import TrendRunnerTemporaryBalances from "../components/TrendRunnerTemporaryBalances";
 
 type Balance = {
   asset: string;
@@ -384,6 +385,7 @@ export default function BalancesScreen() {
               </View>
             );
           })}
+          <TrendRunnerTemporaryBalances />
         </ScrollView>
       )}
     </View>

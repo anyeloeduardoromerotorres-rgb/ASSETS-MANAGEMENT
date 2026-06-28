@@ -7,6 +7,7 @@ import mongoose from "mongoose";
 import Asset from "./models/asset.model.js";
 import { updateAssetCandles } from "./scripts/updateAssets.js";
 import { saveCurrentCapitalSnapshot } from "./services/capitalHistory.service.js";
+import { startTrendRunnerScheduler } from "./services/trendRunnerScheduler.service.js";
 
 dotenv.config();
 
@@ -15,6 +16,7 @@ dns.setServers(["8.8.8.8", "1.1.1.1"]);
 await connectdb();
 
 const PORT = process.env.PORT || 3000;
+const backgroundJobsEnabled = process.env.BACKGROUND_JOBS_ENABLED !== "false";
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Servidor escuchando en http://0.0.0.0:${PORT}`);
@@ -73,20 +75,25 @@ async function snapshotDailyCapital(reason) {
   }
 }
 
-// Se ejecuta una vez cuando inicia el servidor.
-updateAllAssetCandles("startup");
-snapshotDailyCapital("startup");
+if (backgroundJobsEnabled) {
+  // Se ejecuta una vez cuando inicia el servidor.
+  updateAllAssetCandles("startup");
+  snapshotDailyCapital("startup");
+  startTrendRunnerScheduler();
 
-// Se ejecuta todos los dias a las 00:10 UTC, despues del cierre de la vela diaria.
-cron.schedule("10 0 * * *", () => {
-  updateAllAssetCandles("cron diario");
-});
+  // Se ejecuta todos los dias a las 00:10 UTC, despues del cierre de la vela diaria.
+  cron.schedule("10 0 * * *", () => {
+    updateAllAssetCandles("cron diario");
+  });
 
-// Se ejecuta todos los dias a las 00:05 hora Lima para guardar el capital actual.
-cron.schedule(
-  "5 0 * * *",
-  () => {
-    snapshotDailyCapital("cron diario");
-  },
-  { timezone: "America/Lima" }
-);
+  // Se ejecuta todos los dias a las 00:05 hora Lima para guardar el capital actual.
+  cron.schedule(
+    "5 0 * * *",
+    () => {
+      snapshotDailyCapital("cron diario");
+    },
+    { timezone: "America/Lima" }
+  );
+} else {
+  console.log("[local] BACKGROUND_JOBS_ENABLED=false: jobs automaticos desactivados.");
+}

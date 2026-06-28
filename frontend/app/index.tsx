@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import api from "../constants/api";
 import { calculateTotalBalances } from "../utils/calculateTotalBalances";
+import TrendRunnerTemporaryBalances from "../components/TrendRunnerTemporaryBalances";
 
 interface ConfigDoc {
   _id: string;
@@ -1396,6 +1397,13 @@ export default function Index() {
                 })}
               </View>
             )}
+
+            <View style={styles.section}>
+              <TrendRunnerTemporaryBalances
+                includeCrypto={false}
+                title="Trend Runner temporal en eToro"
+              />
+            </View>
           </>
         )}
 

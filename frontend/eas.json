@@ -7,6 +7,12 @@
     "preview": {
       "distribution": "internal"
     },
+    "local-apk": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
+    },
     "production": {
       "android": {
         "buildType": "apk"

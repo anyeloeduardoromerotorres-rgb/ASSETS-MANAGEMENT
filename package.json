@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "nodemon src/index.js",
+    "dev:local": "nodemon src/index.local.js",
     "start": "node index.js",
     "backtest": "node src/scripts/backtestStrategy.js",
     "backtest:symbols": "node src/scripts/backtestSymbols.js",
