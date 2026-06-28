@@ -13,6 +13,7 @@ import {
   TouchableOpacity,
   Modal,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import api from "../constants/api";
 import { calculateTotalBalances } from "../utils/calculateTotalBalances";
 import TrendRunnerTemporaryBalances from "../components/TrendRunnerTemporaryBalances";
@@ -97,14 +98,32 @@ const isCashLikeDraft = (asset: Pick<NewAssetDraft, "symbol">) =>
 const getInitialInvestmentAmount = (
   initialInvestment?: number | Record<string, unknown> | null
 ) => {
+  const parsePossibleNumber = (value: unknown) => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const parsed = parseInput(value);
+      return Number.isNaN(parsed) ? null : parsed;
+    }
+    return null;
+  };
+
   if (initialInvestment == null) return null;
-  if (typeof initialInvestment === "number") return initialInvestment;
-  if (typeof (initialInvestment as { USD?: unknown }).USD === "number") {
-    return (initialInvestment as { USD: number }).USD;
+  const directAmount = parsePossibleNumber(initialInvestment);
+  if (directAmount !== null) return directAmount;
+
+  if (typeof initialInvestment === "object") {
+    const preferredKeys = ["amount", "quantity", "shares", "units", "USD"];
+    for (const key of preferredKeys) {
+      const parsed = parsePossibleNumber((initialInvestment as Record<string, unknown>)[key]);
+      if (parsed !== null) return parsed;
+    }
+
+    for (const value of Object.values(initialInvestment)) {
+      const parsed = parsePossibleNumber(value);
+      if (parsed !== null) return parsed;
+    }
   }
-  if (typeof (initialInvestment as { amount?: unknown }).amount === "number") {
-    return (initialInvestment as { amount: number }).amount;
-  }
+
   return null;
 };
 
@@ -166,10 +185,13 @@ export default function Index() {
   const [savingEtoro, setSavingEtoro] = useState(false);
   const [savingShv, setSavingShv] = useState(false);
 
-  // Carga inicial: configuraciones financieras y lista de assets registrados.
-  useEffect(() => {
-    const fetchConfig = async () => {
+  // Carga configuraciones financieras y lista de assets registrados.
+  const fetchConfig = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
       try {
+        if (!silent) {
+          setLoading(true);
+        }
         const [configRes, assetsRes] = await Promise.all([
           api.get<ConfigDoc[]>("/config-info"),
           api.get<AssetDoc[]>("/assets"),
@@ -227,10 +249,19 @@ export default function Index() {
       } finally {
         setLoading(false);
       }
-    };
+    },
+    []
+  );
 
+  useEffect(() => {
     fetchConfig();
-  }, []);
+  }, [fetchConfig]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchConfig({ silent: true });
+    }, [fetchConfig])
+  );
 
   // Carga los balances de Binance para alimentar el calculo de patrimonio total.
   useEffect(() => {
@@ -1368,8 +1399,6 @@ export default function Index() {
                   const inputValue = stockInputs[asset._id] ?? "";
                   const saving = stockSavingMap[asset._id] ?? false;
                   const errorMessage = stockErrorMap[asset._id] ?? null;
-                  const initialAmount = getInitialInvestmentAmount(asset.initialInvestment);
-                  const formattedInitial = formatNumber(initialAmount ?? null);
 
                   return (
                     <View key={asset._id} style={styles.card}>
@@ -1380,11 +1409,6 @@ export default function Index() {
                         onChangeText={value => handleStockInputChange(asset._id, value)}
                         keyboardType="numeric"
                         placeholder={`Ingrese total en ${asset.symbol ?? "activo"}`}
-                        onFocus={() => {
-                          if (inputValue === formattedInitial) {
-                            handleStockInputChange(asset._id, "");
-                          }
-                        }}
                       />
                       {errorMessage && <Text style={styles.errorText}>{errorMessage}</Text>}
                       <Button

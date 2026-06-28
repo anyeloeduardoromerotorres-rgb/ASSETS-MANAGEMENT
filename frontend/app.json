@@ -16,7 +16,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "usesCleartextTraffic": true,
+      "usesCleartextTraffic": false,
       "edgeToEdgeEnabled": true,
       "package": "com.anyeloert.frontend"
     },
@@ -44,7 +44,7 @@
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": false
           }
         }
       ]

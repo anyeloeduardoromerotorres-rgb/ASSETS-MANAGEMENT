@@ -54,6 +54,7 @@ export const API_BASE_URL = __DEV__ ? getDevApiBaseUrl() : PRODUCTION_API_URL;
 export const API_DEBUG_INFO = {
   apiBaseUrl: API_BASE_URL,
   configuredEnvUrl: process.env.EXPO_PUBLIC_API_URL ?? null,
+  showDebugTools: process.env.EXPO_PUBLIC_SHOW_DEBUG_TOOLS === "true",
   isDev: __DEV__,
   platform: Platform.OS,
 };

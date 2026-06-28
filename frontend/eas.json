@@ -10,13 +10,20 @@
     "local-apk": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://192.168.18.38:3000/api"
+        "EXPO_PUBLIC_API_URL": "http://192.168.18.38:3000/api",
+        "EXPO_PUBLIC_SHOW_DEBUG_TOOLS": "true",
+        "ANDROID_USES_CLEARTEXT": "true"
       },
       "android": {
         "buildType": "apk"
       }
     },
     "production": {
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://hbsjajakwksnsj.duckdns.org/api",
+        "EXPO_PUBLIC_SHOW_DEBUG_TOOLS": "false",
+        "ANDROID_USES_CLEARTEXT": "false"
+      },
       "android": {
         "buildType": "apk"
       }

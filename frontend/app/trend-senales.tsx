@@ -151,6 +151,7 @@ export default function TrendRunnerSignalsScreen() {
   const [closeForm, setCloseForm] = useState<CloseForm | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const showDebugTools = API_DEBUG_INFO.showDebugTools;
 
   const loadData = useCallback(async ({ silent = false } = {}) => {
     try {
@@ -370,8 +371,12 @@ export default function TrendRunnerSignalsScreen() {
 
       <View style={styles.capitalBox}>
         <Text style={styles.capitalTitle}>Capital disponible</Text>
-        <Text style={styles.apiText}>API: {API_DEBUG_INFO.apiBaseUrl}</Text>
-        <Text style={styles.apiText}>ENV: {API_DEBUG_INFO.configuredEnvUrl ?? "-"}</Text>
+        {showDebugTools ? (
+          <>
+            <Text style={styles.apiText}>API: {API_DEBUG_INFO.apiBaseUrl}</Text>
+            <Text style={styles.apiText}>ENV: {API_DEBUG_INFO.configuredEnvUrl ?? "-"}</Text>
+          </>
+        ) : null}
         <Text style={styles.capitalText}>
           Acciones/ETFs: ${fmt(capital?.stocks?.availableCashUsd)} · USD libre ${fmt(capital?.stocks?.availableUsdAfterOpen)} · SHV ${fmt(capital?.stocks?.shvUsd)}
         </Text>
@@ -405,12 +410,16 @@ export default function TrendRunnerSignalsScreen() {
           {scanning ? "Escaneando..." : "Buscar nuevas entradas en todo el universo"}
         </Text>
       </TouchableOpacity>
-      <TouchableOpacity style={styles.testButton} onPress={sendPushTest}>
-        <Text style={styles.actionText}>Enviar push de prueba</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.connectionButton} onPress={testBackendConnection}>
-        <Text style={styles.actionText}>Probar conexion backend</Text>
-      </TouchableOpacity>
+      {showDebugTools ? (
+        <>
+          <TouchableOpacity style={styles.testButton} onPress={sendPushTest}>
+            <Text style={styles.actionText}>Enviar push de prueba</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.connectionButton} onPress={testBackendConnection}>
+            <Text style={styles.actionText}>Probar conexion backend</Text>
+          </TouchableOpacity>
+        </>
+      ) : null}
 
       <View style={styles.filterRow}>
         {[
