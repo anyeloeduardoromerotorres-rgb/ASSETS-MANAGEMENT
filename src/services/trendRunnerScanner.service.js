@@ -263,6 +263,10 @@ async function upsertActiveOpenSignal(asset, analysis, capital, price) {
     status: "active",
   });
 
+  const existingTriggerBar = signal?.raw?.triggerBar;
+  const triggerBar = existingTriggerBar ?? analysis.latestBar;
+  const triggerDateKey = signal?.signalDateKey ?? signalDateKey;
+
   const payload = {
     asset: asset._id,
     symbol: asset.symbol,
@@ -271,7 +275,7 @@ async function upsertActiveOpenSignal(asset, analysis, capital, price) {
     status: "active",
     signalType: analysis.signalType,
     timeframe: "1d",
-    signalDateKey,
+    signalDateKey: triggerDateKey,
     lastCheckedAt: new Date(),
     hold: holdSnapshot(analysis.hold),
     parameters: params,
@@ -290,6 +294,7 @@ async function upsertActiveOpenSignal(asset, analysis, capital, price) {
     },
     omissionReason: null,
     raw: {
+      triggerBar,
       latestBar: analysis.latestBar,
       requiredBars: analysis.requiredBars,
       barsCount: analysis.barsCount,

@@ -3,11 +3,48 @@ import { getBinanceBaseUrl } from "../utils/binance.utils.js";
 import { isoDate } from "./trendRunnerIndicators.service.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const NY_MARKET_CLOSE_BUFFER_MINUTES = 16 * 60 + 5;
 
 const toNumber = (value, fallback = NaN) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 };
+
+function zonedParts(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    dateKey: `${value.year}-${value.month}-${value.day}`,
+    minutes: Number(value.hour) * 60 + Number(value.minute),
+  };
+}
+
+function removeIncompleteDailyBar(bars, asset) {
+  const last = bars.at(-1);
+  if (!last?.date) return bars;
+
+  if (asset?.dataSource === "binance" || asset?.market === "crypto") {
+    const utcToday = isoDate(new Date());
+    return last.date === utcToday ? bars.slice(0, -1) : bars;
+  }
+
+  const nowNy = zonedParts(new Date(), "America/New_York");
+  const marketDayNotClosed = nowNy.minutes < NY_MARKET_CLOSE_BUFFER_MINUTES;
+  if (last.date === nowNy.dateKey && marketDayNotClosed) {
+    return bars.slice(0, -1);
+  }
+
+  return bars;
+}
 
 function normalizeYahooBars(result) {
   const timestamps = result?.timestamp;
@@ -145,10 +182,11 @@ export async function fetchBinanceLatestPrice(symbol) {
 }
 
 export async function fetchDailyBarsForAsset(asset) {
-  if (asset.dataSource === "binance") {
-    return fetchBinanceDailyBars(asset.dataSymbol);
-  }
-  return fetchYahooDailyBars(asset.dataSymbol);
+  const bars = asset.dataSource === "binance"
+    ? await fetchBinanceDailyBars(asset.dataSymbol)
+    : await fetchYahooDailyBars(asset.dataSymbol);
+
+  return removeIncompleteDailyBar(bars, asset);
 }
 
 export async function fetchLatestPriceForAsset(asset) {
