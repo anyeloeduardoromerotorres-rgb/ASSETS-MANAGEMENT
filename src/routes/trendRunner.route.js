@@ -6,6 +6,7 @@ import {
   getCapital,
   getOpenBalances,
   getPositions,
+  getScanStatus,
   getSignals,
   ignoreSignal,
   openPositionFromSignal,
@@ -35,6 +36,7 @@ router.delete("/positions/:id", deletePosition);
 router.post("/scan/open", scanOpen);
 router.post("/scan/open/refresh", refreshOpen);
 router.post("/scan/close", scanClose);
+router.get("/scan/status", getScanStatus);
 
 router.post("/push-token", registerPushToken);
 router.post("/push-test", sendTestPush);

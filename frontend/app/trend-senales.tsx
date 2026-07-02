@@ -70,6 +70,24 @@ type CapitalSummary = {
   };
 };
 
+type ScanJob = {
+  id: string;
+  key: string;
+  label: string;
+  status: "running" | "finished" | "failed";
+  startedAt?: string;
+  finishedAt?: string;
+  result?: {
+    scanned?: number;
+    checked?: number;
+    active?: number;
+    omitted?: number;
+    ignored?: number;
+    errors?: number;
+  };
+  error?: string;
+};
+
 type OpenForm = {
   broker: string;
   openDate: string;
@@ -150,8 +168,9 @@ export default function TrendRunnerSignalsScreen() {
   const [openForm, setOpenForm] = useState<OpenForm | null>(null);
   const [closeForm, setCloseForm] = useState<CloseForm | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [scanning, setScanning] = useState(false);
+  const [scanJob, setScanJob] = useState<ScanJob | null>(null);
   const showDebugTools = API_DEBUG_INFO.showDebugTools;
+  const scanning = scanJob?.status === "running";
 
   const loadData = useCallback(async ({ silent = false } = {}) => {
     try {
@@ -177,6 +196,35 @@ export default function TrendRunnerSignalsScreen() {
     loadData();
   }, [loadData]);
 
+  const loadScanStatus = useCallback(async () => {
+    const res = await api.get<{ jobs: ScanJob[] }>("/trend-runner/scan/status");
+    const jobs = Array.isArray(res.data?.jobs) ? res.data.jobs : [];
+    const currentJob = jobs.find((job) => job.status === "running") ?? jobs[0] ?? null;
+    setScanJob(currentJob);
+    return currentJob;
+  }, []);
+
+  useEffect(() => {
+    loadScanStatus().catch(() => {});
+  }, [loadScanStatus]);
+
+  useEffect(() => {
+    if (!scanning) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const currentJob = await loadScanStatus();
+        if (currentJob?.status && currentJob.status !== "running") {
+          await loadData({ silent: true });
+        }
+      } catch (error) {
+        console.error("Error consultando estado de escaneo Trend Runner", error);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [scanning, loadScanStatus, loadData]);
+
   useFocusEffect(
     useCallback(() => {
       loadData({ silent: true });
@@ -186,6 +234,32 @@ export default function TrendRunnerSignalsScreen() {
   const visibleSignals = useMemo(() => {
     return signals.filter((signal) => filter === "all" || signal.side === filter);
   }, [signals, filter]);
+
+  const scanStatusText = useMemo(() => {
+    if (!scanJob) return null;
+
+    const label = scanJob.label || "Escaneo Trend Runner";
+    const result = scanJob.result ?? {};
+    const reviewed = result.scanned ?? result.checked;
+
+    if (scanJob.status === "running") {
+      return `${label} en progreso. Puede tardar varios minutos.`;
+    }
+
+    if (scanJob.status === "failed") {
+      return `${label} fallo: ${scanJob.error ?? "error desconocido"}`;
+    }
+
+    const parts = [
+      reviewed != null ? `revisados ${reviewed}` : null,
+      result.active != null ? `activas ${result.active}` : null,
+      result.omitted != null ? `omitidas ${result.omitted}` : null,
+      result.ignored != null ? `ignoradas ${result.ignored}` : null,
+      result.errors != null ? `errores ${result.errors}` : null,
+    ].filter(Boolean);
+
+    return `${label} finalizado${parts.length ? `: ${parts.join(" · ")}` : "."}`;
+  }, [scanJob]);
 
   const openExecutionModal = (signal: TrendSignal) => {
     setSelectedSignal(signal);
@@ -286,22 +360,28 @@ export default function TrendRunnerSignalsScreen() {
 
   const scanNow = async (kind: "open" | "close" | "refresh") => {
     try {
-      setScanning(true);
+      let startedJobs: ScanJob[] = [];
       if (kind === "open") {
-        await api.post("/trend-runner/scan/open");
+        const res = await api.post<{ job?: ScanJob; message?: string }>("/trend-runner/scan/open");
+        if (res.data?.job) startedJobs = [res.data.job];
       } else if (kind === "close") {
-        await api.post("/trend-runner/scan/close");
+        const res = await api.post<{ job?: ScanJob; message?: string }>("/trend-runner/scan/close");
+        if (res.data?.job) startedJobs = [res.data.job];
       } else {
-        await Promise.all([
+        const responses = await Promise.all([
           api.post("/trend-runner/scan/open/refresh"),
           api.post("/trend-runner/scan/close"),
         ]);
+        startedJobs = responses
+          .map((res) => res.data?.job as ScanJob | undefined)
+          .filter(Boolean) as ScanJob[];
       }
+
+      const currentJob = startedJobs.find((job) => job.status === "running") ?? startedJobs[0];
+      if (currentJob) setScanJob(currentJob);
       await loadData({ silent: true });
     } catch (error: any) {
       Alert.alert("Error", error?.response?.data?.error ?? "No se pudo ejecutar el escaneo.");
-    } finally {
-      setScanning(false);
     }
   };
 
@@ -410,6 +490,11 @@ export default function TrendRunnerSignalsScreen() {
           {scanning ? "Escaneando..." : "Buscar nuevas entradas en todo el universo"}
         </Text>
       </TouchableOpacity>
+      {scanStatusText ? (
+        <Text style={[styles.scanStatus, scanJob?.status === "failed" && styles.scanStatusError]}>
+          {scanStatusText}
+        </Text>
+      ) : null}
       {showDebugTools ? (
         <>
           <TouchableOpacity style={styles.testButton} onPress={sendPushTest}>
@@ -574,6 +659,8 @@ const styles = StyleSheet.create({
   actionButton: { flex: 1, backgroundColor: "#1976d2", borderRadius: 8, paddingVertical: 10, alignItems: "center" },
   secondaryButton: { backgroundColor: "#2e7d32" },
   fullButton: { backgroundColor: "#455a64", borderRadius: 8, paddingVertical: 10, alignItems: "center", marginBottom: 12 },
+  scanStatus: { marginTop: -4, marginBottom: 12, fontSize: 13, color: "#455a64" },
+  scanStatusError: { color: "#b71c1c" },
   testButton: { backgroundColor: "#6a1b9a", borderRadius: 8, paddingVertical: 10, alignItems: "center", marginBottom: 12 },
   connectionButton: { backgroundColor: "#00838f", borderRadius: 8, paddingVertical: 10, alignItems: "center", marginBottom: 12 },
   disabledButton: { opacity: 0.55 },

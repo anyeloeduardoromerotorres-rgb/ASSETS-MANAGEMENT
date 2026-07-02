@@ -16,6 +16,18 @@ import {
   saveTrendRunnerPushToken,
   sendTrendRunnerPush,
 } from "../services/trendRunnerNotification.service.js";
+import {
+  getTrendRunnerScanJobs,
+  startTrendRunnerScanJob,
+} from "../services/trendRunnerScanJobs.service.js";
+
+function shouldRunSync(req) {
+  return String(req.query?.sync ?? req.body?.sync ?? "").toLowerCase() === "true";
+}
+
+function scanMarket(req) {
+  return req.body?.market ?? req.query?.market;
+}
 
 export async function seedAssets(req, res) {
   try {
@@ -37,8 +49,24 @@ export async function getAssets(req, res) {
 
 export async function scanOpen(req, res) {
   try {
-    const result = await scanOpenSignals({ market: req.body?.market ?? req.query?.market });
-    res.json(result);
+    const market = scanMarket(req);
+    if (shouldRunSync(req)) {
+      const result = await scanOpenSignals({ market });
+      return res.json(result);
+    }
+
+    const result = startTrendRunnerScanJob(
+      `open:${market ?? "all"}`,
+      "Escaneo de entradas Trend Runner",
+      () => scanOpenSignals({ market })
+    );
+
+    res.status(202).json({
+      message: result.alreadyRunning
+        ? "El escaneo de entradas ya esta corriendo."
+        : "Escaneo de entradas iniciado.",
+      ...result,
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -46,10 +74,24 @@ export async function scanOpen(req, res) {
 
 export async function refreshOpen(req, res) {
   try {
-    const result = await refreshActiveOpenSignals({
-      market: req.body?.market ?? req.query?.market,
+    const market = scanMarket(req);
+    if (shouldRunSync(req)) {
+      const result = await refreshActiveOpenSignals({ market });
+      return res.json(result);
+    }
+
+    const result = startTrendRunnerScanJob(
+      `refresh-open:${market ?? "all"}`,
+      "Actualizacion de senales activas Trend Runner",
+      () => refreshActiveOpenSignals({ market })
+    );
+
+    res.status(202).json({
+      message: result.alreadyRunning
+        ? "La actualizacion de senales activas ya esta corriendo."
+        : "Actualizacion de senales activas iniciada.",
+      ...result,
     });
-    res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -57,8 +99,32 @@ export async function refreshOpen(req, res) {
 
 export async function scanClose(req, res) {
   try {
-    const result = await scanCloseSignals({ market: req.body?.market ?? req.query?.market });
-    res.json(result);
+    const market = scanMarket(req);
+    if (shouldRunSync(req)) {
+      const result = await scanCloseSignals({ market });
+      return res.json(result);
+    }
+
+    const result = startTrendRunnerScanJob(
+      `close:${market ?? "all"}`,
+      "Escaneo de cierres Trend Runner",
+      () => scanCloseSignals({ market })
+    );
+
+    res.status(202).json({
+      message: result.alreadyRunning
+        ? "El escaneo de cierres ya esta corriendo."
+        : "Escaneo de cierres iniciado.",
+      ...result,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+}
+
+export async function getScanStatus(_req, res) {
+  try {
+    res.json({ jobs: getTrendRunnerScanJobs() });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
