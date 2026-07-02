@@ -132,11 +132,12 @@ const calculateTp1Quantity = (signal: TrendSignal) => {
 };
 
 const assetNameFromSignal = (signal: TrendSignal) => {
+  const symbol = signal.symbol?.trim().toUpperCase();
   const name = signal.asset?.name?.trim();
-  if (name) return name;
+  if (name && name.toUpperCase() !== symbol) return name;
 
   const displaySymbol = signal.asset?.displaySymbol?.trim();
-  if (displaySymbol && displaySymbol !== signal.symbol) return displaySymbol;
+  if (displaySymbol && displaySymbol.toUpperCase() !== symbol) return displaySymbol;
 
   return null;
 };
