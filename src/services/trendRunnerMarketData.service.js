@@ -49,9 +49,11 @@ function normalizeYahooBars(result) {
 }
 
 export async function fetchYahooDailyBars(symbol) {
+  const period1 = Math.floor(Date.UTC(1980, 0, 1) / 1000);
+  const period2 = Math.floor((Date.now() + DAY_MS) / 1000);
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     symbol
-  )}?interval=1d&range=max&events=history`;
+  )}?interval=1d&period1=${period1}&period2=${period2}&events=history`;
   const response = await axios.get(url, { timeout: 30000 });
   const result = response.data?.chart?.result?.[0];
   return normalizeYahooBars(result);
