@@ -1,0 +1,305 @@
+strategy,symbol,name,market,trades,buys,sells,buyHoldPct
+old_slope_costed,SPY,SPDR S&P 500 ETF Trust,etf,0,0,0,79.21377888317626
+old_slope_costed,QQQ,Invesco QQQ Trust,etf,0,0,0,105.85214983155767
+old_slope_costed,IWM,iShares Russell 2000 ETF,etf,0,0,0,75.52340528489461
+old_slope_costed,GLD,SPDR Gold Shares,etf,0,0,0,107.47957464693441
+old_slope_costed,TLT,iShares 20+ Year Treasury Bond ETF,etf,0,0,0,5.3760281993534775
+old_slope_costed,XLE,Energy Select Sector SPDR Fund,etf,0,0,0,29.236591744156847
+old_slope_costed,XLV,Health Care Select Sector SPDR Fund,etf,0,0,0,28.37288103545843
+old_slope_costed,VOO,Vanguard S&P 500 ETF,etf,0,0,0,79.59426255396147
+old_slope_costed,SCHD,Schwab U.S. Dividend Equity ETF,etf,0,0,0,48.35332394925776
+old_slope_costed,GLDM,SPDR Gold MiniShares Trust,etf,1,1,0,109.15990600330136
+old_slope_costed,AAPL,Apple Inc.,stock,2,1,1,70.55005953453883
+old_slope_costed,MSFT,Microsoft Corporation,stock,1,1,0,23.826213391645588
+old_slope_costed,NVDA,NVIDIA Corporation,stock,2,1,1,375.72364638346727
+old_slope_costed,AMZN,"Amazon.com, Inc.",stock,2,1,1,87.19021537204881
+old_slope_costed,JPM,JPMorgan Chase & Co.,stock,0,0,0,143.78068747060416
+old_slope_costed,XOM,Exxon Mobil Corporation,stock,0,0,0,30.004403958016333
+old_slope_costed,KO,The Coca-Cola Company,stock,0,0,0,52.94076189018906
+old_slope_costed,WMT,Walmart Inc.,stock,0,0,0,107.02269443717918
+old_slope_costed,BRK-B,Berkshire Hathaway Inc. Class B,stock,0,0,0,38.754993656434735
+old_slope_costed,META,"Meta Platforms, Inc.",stock,0,0,0,106.73142603042325
+old_slope_costed,BTCUSDT,Bitcoin,crypto,4,4,0,125.8227383301969
+old_slope_costed,ETHUSDT,Ethereum,crypto,24,13,11,1.035729530218199
+old_slope_costed,BNBUSDT,BNB,crypto,28,13,15,160.74846044528664
+old_slope_costed,SOLUSDT,Solana,crypto,32,18,14,298.6618630983016
+old_slope_costed,DIA,SPDR Dow Jones Industrial Average ETF Trust,etf,0,0,0,60.86051616686339
+old_slope_costed,MDY,SPDR S&P MidCap 400 ETF Trust,etf,0,0,0,58.2302472224004
+old_slope_costed,VTI,Vanguard Total Stock Market ETF,etf,0,0,0,79.13920721659147
+old_slope_costed,VEA,Vanguard FTSE Developed Markets ETF,etf,0,0,0,72.83095393620722
+old_slope_costed,VWO,Vanguard FTSE Emerging Markets ETF,etf,0,0,0,62.219723631743065
+old_slope_costed,EFA,iShares MSCI EAFE ETF,etf,0,0,0,61.92903323367545
+old_slope_costed,EEM,iShares MSCI Emerging Markets ETF,etf,0,0,0,85.59828767641191
+old_slope_costed,EWJ,iShares MSCI Japan ETF,etf,0,0,0,64.25472428033973
+old_slope_costed,EWU,iShares MSCI United Kingdom ETF,etf,0,0,0,61.17958035125757
+old_slope_costed,EWG,iShares MSCI Germany ETF,etf,0,0,0,63.91680128572741
+old_slope_costed,EWC,iShares MSCI Canada ETF,etf,0,0,0,79.68792361793801
+old_slope_costed,EWA,iShares MSCI Australia ETF,etf,0,0,0,41.75517512395348
+old_slope_costed,EWY,iShares MSCI South Korea ETF,etf,0,0,0,227.7470512161383
+old_slope_costed,EWZ,iShares MSCI Brazil ETF,etf,0,0,0,30.61667708966549
+old_slope_costed,EWT,iShares MSCI Taiwan ETF,etf,0,0,0,187.39969251780533
+old_slope_costed,EWW,iShares MSCI Mexico ETF,etf,0,0,0,39.52738718419337
+old_slope_costed,FXI,iShares China Large-Cap ETF,etf,0,0,0,27.063514901802876
+old_slope_costed,XLF,Financial Select Sector SPDR Fund,etf,0,0,0,69.89074533781587
+old_slope_costed,XLK,Technology Select Sector SPDR Fund,etf,0,0,0,129.8296605302137
+old_slope_costed,XLY,Consumer Discretionary Select Sector SPDR Fund,etf,0,0,0,50.12582184286592
+old_slope_costed,XLP,Consumer Staples Select Sector SPDR Fund,etf,0,0,0,27.97949477024979
+old_slope_costed,XLU,Utilities Select Sector SPDR Fund,etf,0,0,0,53.58646691321769
+old_slope_costed,XLI,Industrial Select Sector SPDR Fund,etf,0,0,0,87.32659904106563
+old_slope_costed,XLB,Materials Select Sector SPDR Fund,etf,0,0,0,37.26856574910615
+old_slope_costed,SMH,VanEck Semiconductor ETF,etf,0,0,0,343.02435875952864
+old_slope_costed,IBB,iShares Biotechnology ETF,etf,0,0,0,56.42810165783201
+old_slope_costed,XBI,SPDR S&P Biotech ETF,etf,0,0,0,115.92531262851242
+old_slope_costed,XRT,SPDR S&P Retail ETF,etf,0,0,0,52.41849647805657
+old_slope_costed,KRE,SPDR S&P Regional Banking ETF,etf,0,0,0,99.58693668527934
+old_slope_costed,ITB,iShares U.S. Home Construction ETF,etf,0,0,0,33.1152280420975
+old_slope_costed,XHB,SPDR S&P Homebuilders ETF,etf,0,0,0,50.85309239030082
+old_slope_costed,GDX,VanEck Gold Miners ETF,etf,0,0,0,169.34236837170852
+old_slope_costed,GDXJ,VanEck Junior Gold Miners ETF,etf,0,0,0,203.50973896236763
+old_slope_costed,VNQ,Vanguard Real Estate ETF,etf,0,0,0,40.79895006495524
+old_slope_costed,SLV,iShares Silver Trust,etf,0,0,0,148.28545885301884
+old_slope_costed,USO,United States Oil Fund,etf,0,0,0,28.078879028721172
+old_slope_costed,DBC,Invesco DB Commodity Index Tracking Fund,etf,0,0,0,19.568827129570685
+old_slope_costed,IEF,iShares 7-10 Year Treasury Bond ETF,etf,0,0,0,12.8369558311072
+old_slope_costed,SHY,iShares 1-3 Year Treasury Bond ETF,etf,0,0,0,12.517861943578756
+old_slope_costed,TIP,iShares TIPS Bond ETF,etf,0,0,0,13.62792161132036
+old_slope_costed,AGG,iShares Core U.S. Aggregate Bond ETF,etf,0,0,0,15.378735003016164
+old_slope_costed,BND,Vanguard Total Bond Market ETF,etf,0,0,0,15.29896052234012
+old_slope_costed,LQD,iShares iBoxx Investment Grade Corporate Bond ETF,etf,0,0,0,18.491196636920094
+old_slope_costed,HYG,iShares iBoxx High Yield Corporate Bond ETF,etf,0,0,0,27.198869112529266
+old_slope_costed,EMB,iShares J.P. Morgan USD Emerging Markets Bond ETF,etf,0,0,0,32.900673810087746
+old_slope_costed,GOOGL,Alphabet Inc. Class A,stock,0,0,0,179.77956371552006
+old_slope_costed,GOOG,Alphabet Inc. Class C,stock,0,0,0,175.0822296566263
+old_slope_costed,TSLA,"Tesla, Inc.",stock,10,5,5,73.67689452493124
+old_slope_costed,BAC,Bank of America Corporation,stock,0,0,0,125.72826306352671
+old_slope_costed,WFC,Wells Fargo & Company,stock,0,0,0,122.89877911857023
+old_slope_costed,GS,"Goldman Sachs Group, Inc.",stock,0,0,0,230.83830852963789
+old_slope_costed,MS,Morgan Stanley,stock,0,0,0,177.31811609247984
+old_slope_costed,V,Visa Inc.,stock,1,1,0,52.506630794260275
+old_slope_costed,MA,Mastercard Incorporated,stock,3,2,1,32.00562125900008
+old_slope_costed,AXP,American Express Company,stock,0,0,0,134.74625223717078
+old_slope_costed,UNH,UnitedHealth Group Incorporated,stock,3,2,1,-10.802675933187567
+old_slope_costed,JNJ,Johnson & Johnson,stock,0,0,0,71.47957502721344
+old_slope_costed,PFE,Pfizer Inc.,stock,0,0,0,-12.9303290858809
+old_slope_costed,MRK,"Merck & Co., Inc.",stock,0,0,0,28.430967590059364
+old_slope_costed,ABT,Abbott Laboratories,stock,1,1,0,-0.7368607072006039
+old_slope_costed,TMO,Thermo Fisher Scientific Inc.,stock,2,1,1,3.0103121168490565
+old_slope_costed,DHR,Danaher Corporation,stock,3,2,1,-10.508372353705408
+old_slope_costed,MDT,Medtronic plc,stock,0,0,0,7.9685067214436245
+old_slope_costed,ISRG,"Intuitive Surgical, Inc.",stock,1,1,0,39.61831639124254
+old_slope_costed,AMGN,Amgen Inc.,stock,6,3,3,46.812334999719155
+old_slope_costed,LLY,Eli Lilly and Company,stock,2,1,1,120.65722521234004
+old_slope_costed,PG,Procter & Gamble Company,stock,0,0,0,4.474849623686161
+old_slope_costed,PEP,"PepsiCo, Inc.",stock,2,1,1,-11.198997479780893
+old_slope_costed,COST,Costco Wholesale Corporation,stock,0,0,0,71.97575369829548
+old_slope_costed,HD,"The Home Depot, Inc.",stock,1,1,0,23.03273320898418
+old_slope_costed,LOW,"Lowe's Companies, Inc.",stock,2,1,1,11.25914725246211
+old_slope_costed,MCD,McDonald's Corporation,stock,1,1,0,5.654420412752814
+old_slope_costed,SBUX,Starbucks Corporation,stock,2,1,1,18.33239886060982
+old_slope_costed,NKE,"NIKE, Inc.",stock,1,1,0,-49.71696439795399
+old_slope_costed,DIS,The Walt Disney Company,stock,0,0,0,21.49482720432532
+old_slope_costed,NFLX,"Netflix, Inc.",stock,2,2,0,95.33452096727653
+old_slope_costed,ORCL,Oracle Corporation,stock,3,2,1,34.92514007385943
+old_slope_costed,CSCO,"Cisco Systems, Inc.",stock,0,0,0,135.53757846844942
+old_slope_costed,IBM,International Business Machines Corporation,stock,0,0,0,112.20070819235394
+old_slope_costed,INTC,Intel Corporation,stock,3,1,2,277.8361658018153
+old_slope_costed,AMD,"Advanced Micro Devices, Inc.",stock,0,0,0,462.2453451571505
+old_slope_costed,QCOM,QUALCOMM Incorporated,stock,2,1,1,79.05011733996572
+old_slope_costed,TXN,Texas Instruments Incorporated,stock,2,1,1,101.79900645198438
+old_slope_costed,AVGO,Broadcom Inc.,stock,9,5,4,359.34252806597965
+old_slope_costed,CRM,"Salesforce, Inc.",stock,1,1,0,-19.559185666018276
+old_slope_costed,ADBE,Adobe Inc.,stock,1,1,0,-58.86527867325356
+old_slope_costed,AMAT,"Applied Materials, Inc.",stock,2,1,1,388.82823645891466
+old_slope_costed,LRCX,Lam Research Corporation,stock,3,1,2,547.2329631834989
+old_slope_costed,KLAC,KLA Corporation,stock,0,0,0,502.668145265418
+old_slope_costed,CAT,Caterpillar Inc.,stock,0,0,0,278.00197875957633
+old_slope_costed,DE,Deere & Company,stock,0,0,0,71.72510663212488
+old_slope_costed,HON,Honeywell International Inc.,stock,0,0,0,31.891792992638624
+old_slope_costed,UNP,Union Pacific Corporation,stock,0,0,0,41.14701432026955
+old_slope_costed,UPS,"United Parcel Service, Inc.",stock,0,0,0,-16.760151113412636
+old_slope_costed,FDX,FedEx Corporation,stock,0,0,0,57.82426785946917
+old_slope_costed,BA,Boeing Company,stock,0,0,0,10.555861822103573
+old_slope_costed,LMT,Lockheed Martin Corporation,stock,2,1,1,35.80942993629688
+old_slope_costed,CVX,Chevron Corporation,stock,0,0,0,11.987734695338247
+old_slope_costed,COP,ConocoPhillips,stock,0,0,0,-5.520076487577164
+old_slope_costed,SLB,Schlumberger Limited,stock,0,0,0,-17.928675599193344
+old_slope_costed,TSM,Taiwan Semiconductor Manufacturing Company Limited,adr,0,0,0,438.42925004184366
+old_slope_costed,ASML,ASML Holding N.V.,adr,2,1,1,221.40792753274096
+old_slope_costed,SAP,SAP SE,adr,0,0,0,24.712302284794063
+old_slope_costed,TM,Toyota Motor Corporation,adr,0,0,0,-4.078545796109201
+old_slope_costed,SONY,Sony Group Corporation,adr,0,0,0,24.25186688082299
+old_slope_costed,NVO,Novo Nordisk A/S,adr,2,2,0,-42.47214875929676
+old_slope_costed,AZN,AstraZeneca PLC,adr,0,0,0,42.88689552225355
+old_slope_costed,UL,Unilever PLC,adr,0,0,0,17.847110410743028
+old_slope_costed,BHP,BHP Group Limited,adr,0,0,0,58.88721713611302
+old_slope_costed,RIO,Rio Tinto Group,adr,0,0,0,70.3952162887718
+old_slope_costed,VALE,Vale S.A.,adr,0,0,0,38.1664130838981
+old_slope_costed,PBR,Petroleo Brasileiro S.A. - Petrobras,adr,0,0,0,45.09011706391788
+old_slope_costed,BP,BP p.l.c.,adr,0,0,0,9.19710650032628
+old_slope_costed,SHEL,Shell plc,adr,0,0,0,32.404159625897776
+old_slope_costed,TTE,TotalEnergies SE,adr,0,0,0,30.61195616269512
+old_slope_costed,HSBC,HSBC Holdings plc,adr,0,0,0,195.44013682742008
+old_slope_costed,RY,Royal Bank of Canada,adr,0,0,0,153.98641324342722
+old_slope_costed,TD,The Toronto-Dominion Bank,adr,0,0,0,124.31087467098392
+old_slope_costed,INFY,Infosys Limited,adr,0,0,0,-34.14886757955649
+old_slope_costed,MELI,"MercadoLibre, Inc.",adr,1,1,0,36.4326208103811
+old_slope_costed,ADAUSDT,Cardano,crypto,30,16,14,-37.15802368313598
+old_slope_costed,XRPUSDT,XRP,crypto,5,4,1,105.58375634517768
+old_slope_costed,DOGEUSDT,Dogecoin,crypto,40,24,16,17.392717815344618
+old_slope_costed,LTCUSDT,Litecoin,crypto,0,0,0,-33.64921547304645
+old_slope_costed,BCHUSDT,Bitcoin Cash,crypto,0,0,0,1.106833493743986
+old_slope_costed,LINKUSDT,Chainlink,crypto,23,12,11,5.748778384593267
+old_slope_costed,DOTUSDT,Polkadot,crypto,0,0,0,-79.37297835282409
+old_slope_costed,AVAXUSDT,Avalanche,crypto,1,1,0,-24.84780157835399
+old_slope_original_no_costs,SPY,SPDR S&P 500 ETF Trust,etf,0,0,0,79.21377888317626
+old_slope_original_no_costs,QQQ,Invesco QQQ Trust,etf,0,0,0,105.85214983155767
+old_slope_original_no_costs,IWM,iShares Russell 2000 ETF,etf,0,0,0,75.52340528489461
+old_slope_original_no_costs,GLD,SPDR Gold Shares,etf,0,0,0,107.47957464693441
+old_slope_original_no_costs,TLT,iShares 20+ Year Treasury Bond ETF,etf,0,0,0,5.3760281993534775
+old_slope_original_no_costs,XLE,Energy Select Sector SPDR Fund,etf,0,0,0,29.236591744156847
+old_slope_original_no_costs,XLV,Health Care Select Sector SPDR Fund,etf,0,0,0,28.37288103545843
+old_slope_original_no_costs,VOO,Vanguard S&P 500 ETF,etf,0,0,0,79.59426255396147
+old_slope_original_no_costs,SCHD,Schwab U.S. Dividend Equity ETF,etf,0,0,0,48.35332394925776
+old_slope_original_no_costs,GLDM,SPDR Gold MiniShares Trust,etf,1,1,0,109.15990600330136
+old_slope_original_no_costs,AAPL,Apple Inc.,stock,2,1,1,70.55005953453883
+old_slope_original_no_costs,MSFT,Microsoft Corporation,stock,1,1,0,23.826213391645588
+old_slope_original_no_costs,NVDA,NVIDIA Corporation,stock,2,1,1,375.72364638346727
+old_slope_original_no_costs,AMZN,"Amazon.com, Inc.",stock,2,1,1,87.19021537204881
+old_slope_original_no_costs,JPM,JPMorgan Chase & Co.,stock,0,0,0,143.78068747060416
+old_slope_original_no_costs,XOM,Exxon Mobil Corporation,stock,0,0,0,30.004403958016333
+old_slope_original_no_costs,KO,The Coca-Cola Company,stock,0,0,0,52.94076189018906
+old_slope_original_no_costs,WMT,Walmart Inc.,stock,0,0,0,107.02269443717918
+old_slope_original_no_costs,BRK-B,Berkshire Hathaway Inc. Class B,stock,0,0,0,38.754993656434735
+old_slope_original_no_costs,META,"Meta Platforms, Inc.",stock,0,0,0,106.73142603042325
+old_slope_original_no_costs,BTCUSDT,Bitcoin,crypto,4,4,0,125.8227383301969
+old_slope_original_no_costs,ETHUSDT,Ethereum,crypto,24,13,11,1.035729530218199
+old_slope_original_no_costs,BNBUSDT,BNB,crypto,28,13,15,160.74846044528664
+old_slope_original_no_costs,SOLUSDT,Solana,crypto,32,18,14,298.6618630983016
+old_slope_original_no_costs,DIA,SPDR Dow Jones Industrial Average ETF Trust,etf,0,0,0,60.86051616686339
+old_slope_original_no_costs,MDY,SPDR S&P MidCap 400 ETF Trust,etf,0,0,0,58.2302472224004
+old_slope_original_no_costs,VTI,Vanguard Total Stock Market ETF,etf,0,0,0,79.13920721659147
+old_slope_original_no_costs,VEA,Vanguard FTSE Developed Markets ETF,etf,0,0,0,72.83095393620722
+old_slope_original_no_costs,VWO,Vanguard FTSE Emerging Markets ETF,etf,0,0,0,62.219723631743065
+old_slope_original_no_costs,EFA,iShares MSCI EAFE ETF,etf,0,0,0,61.92903323367545
+old_slope_original_no_costs,EEM,iShares MSCI Emerging Markets ETF,etf,0,0,0,85.59828767641191
+old_slope_original_no_costs,EWJ,iShares MSCI Japan ETF,etf,0,0,0,64.25472428033973
+old_slope_original_no_costs,EWU,iShares MSCI United Kingdom ETF,etf,0,0,0,61.17958035125757
+old_slope_original_no_costs,EWG,iShares MSCI Germany ETF,etf,0,0,0,63.91680128572741
+old_slope_original_no_costs,EWC,iShares MSCI Canada ETF,etf,0,0,0,79.68792361793801
+old_slope_original_no_costs,EWA,iShares MSCI Australia ETF,etf,0,0,0,41.75517512395348
+old_slope_original_no_costs,EWY,iShares MSCI South Korea ETF,etf,0,0,0,227.7470512161383
+old_slope_original_no_costs,EWZ,iShares MSCI Brazil ETF,etf,0,0,0,30.61667708966549
+old_slope_original_no_costs,EWT,iShares MSCI Taiwan ETF,etf,0,0,0,187.39969251780533
+old_slope_original_no_costs,EWW,iShares MSCI Mexico ETF,etf,0,0,0,39.52738718419337
+old_slope_original_no_costs,FXI,iShares China Large-Cap ETF,etf,0,0,0,27.063514901802876
+old_slope_original_no_costs,XLF,Financial Select Sector SPDR Fund,etf,0,0,0,69.89074533781587
+old_slope_original_no_costs,XLK,Technology Select Sector SPDR Fund,etf,0,0,0,129.8296605302137
+old_slope_original_no_costs,XLY,Consumer Discretionary Select Sector SPDR Fund,etf,0,0,0,50.12582184286592
+old_slope_original_no_costs,XLP,Consumer Staples Select Sector SPDR Fund,etf,0,0,0,27.97949477024979
+old_slope_original_no_costs,XLU,Utilities Select Sector SPDR Fund,etf,0,0,0,53.58646691321769
+old_slope_original_no_costs,XLI,Industrial Select Sector SPDR Fund,etf,0,0,0,87.32659904106563
+old_slope_original_no_costs,XLB,Materials Select Sector SPDR Fund,etf,0,0,0,37.26856574910615
+old_slope_original_no_costs,SMH,VanEck Semiconductor ETF,etf,0,0,0,343.02435875952864
+old_slope_original_no_costs,IBB,iShares Biotechnology ETF,etf,0,0,0,56.42810165783201
+old_slope_original_no_costs,XBI,SPDR S&P Biotech ETF,etf,0,0,0,115.92531262851242
+old_slope_original_no_costs,XRT,SPDR S&P Retail ETF,etf,0,0,0,52.41849647805657
+old_slope_original_no_costs,KRE,SPDR S&P Regional Banking ETF,etf,0,0,0,99.58693668527934
+old_slope_original_no_costs,ITB,iShares U.S. Home Construction ETF,etf,0,0,0,33.1152280420975
+old_slope_original_no_costs,XHB,SPDR S&P Homebuilders ETF,etf,0,0,0,50.85309239030082
+old_slope_original_no_costs,GDX,VanEck Gold Miners ETF,etf,0,0,0,169.34236837170852
+old_slope_original_no_costs,GDXJ,VanEck Junior Gold Miners ETF,etf,0,0,0,203.50973896236763
+old_slope_original_no_costs,VNQ,Vanguard Real Estate ETF,etf,0,0,0,40.79895006495524
+old_slope_original_no_costs,SLV,iShares Silver Trust,etf,0,0,0,148.28545885301884
+old_slope_original_no_costs,USO,United States Oil Fund,etf,0,0,0,28.078879028721172
+old_slope_original_no_costs,DBC,Invesco DB Commodity Index Tracking Fund,etf,0,0,0,19.568827129570685
+old_slope_original_no_costs,IEF,iShares 7-10 Year Treasury Bond ETF,etf,0,0,0,12.8369558311072
+old_slope_original_no_costs,SHY,iShares 1-3 Year Treasury Bond ETF,etf,0,0,0,12.517861943578756
+old_slope_original_no_costs,TIP,iShares TIPS Bond ETF,etf,0,0,0,13.62792161132036
+old_slope_original_no_costs,AGG,iShares Core U.S. Aggregate Bond ETF,etf,0,0,0,15.378735003016164
+old_slope_original_no_costs,BND,Vanguard Total Bond Market ETF,etf,0,0,0,15.29896052234012
+old_slope_original_no_costs,LQD,iShares iBoxx Investment Grade Corporate Bond ETF,etf,0,0,0,18.491196636920094
+old_slope_original_no_costs,HYG,iShares iBoxx High Yield Corporate Bond ETF,etf,0,0,0,27.198869112529266
+old_slope_original_no_costs,EMB,iShares J.P. Morgan USD Emerging Markets Bond ETF,etf,0,0,0,32.900673810087746
+old_slope_original_no_costs,GOOGL,Alphabet Inc. Class A,stock,0,0,0,179.77956371552006
+old_slope_original_no_costs,GOOG,Alphabet Inc. Class C,stock,0,0,0,175.0822296566263
+old_slope_original_no_costs,TSLA,"Tesla, Inc.",stock,10,5,5,73.67689452493124
+old_slope_original_no_costs,BAC,Bank of America Corporation,stock,0,0,0,125.72826306352671
+old_slope_original_no_costs,WFC,Wells Fargo & Company,stock,0,0,0,122.89877911857023
+old_slope_original_no_costs,GS,"Goldman Sachs Group, Inc.",stock,0,0,0,230.83830852963789
+old_slope_original_no_costs,MS,Morgan Stanley,stock,0,0,0,177.31811609247984
+old_slope_original_no_costs,V,Visa Inc.,stock,1,1,0,52.506630794260275
+old_slope_original_no_costs,MA,Mastercard Incorporated,stock,3,2,1,32.00562125900008
+old_slope_original_no_costs,AXP,American Express Company,stock,0,0,0,134.74625223717078
+old_slope_original_no_costs,UNH,UnitedHealth Group Incorporated,stock,3,2,1,-10.802675933187567
+old_slope_original_no_costs,JNJ,Johnson & Johnson,stock,0,0,0,71.47957502721344
+old_slope_original_no_costs,PFE,Pfizer Inc.,stock,0,0,0,-12.9303290858809
+old_slope_original_no_costs,MRK,"Merck & Co., Inc.",stock,0,0,0,28.430967590059364
+old_slope_original_no_costs,ABT,Abbott Laboratories,stock,1,1,0,-0.7368607072006039
+old_slope_original_no_costs,TMO,Thermo Fisher Scientific Inc.,stock,2,1,1,3.0103121168490565
+old_slope_original_no_costs,DHR,Danaher Corporation,stock,3,2,1,-10.508372353705408
+old_slope_original_no_costs,MDT,Medtronic plc,stock,0,0,0,7.9685067214436245
+old_slope_original_no_costs,ISRG,"Intuitive Surgical, Inc.",stock,1,1,0,39.61831639124254
+old_slope_original_no_costs,AMGN,Amgen Inc.,stock,6,3,3,46.812334999719155
+old_slope_original_no_costs,LLY,Eli Lilly and Company,stock,2,1,1,120.65722521234004
+old_slope_original_no_costs,PG,Procter & Gamble Company,stock,0,0,0,4.474849623686161
+old_slope_original_no_costs,PEP,"PepsiCo, Inc.",stock,2,1,1,-11.198997479780893
+old_slope_original_no_costs,COST,Costco Wholesale Corporation,stock,0,0,0,71.97575369829548
+old_slope_original_no_costs,HD,"The Home Depot, Inc.",stock,1,1,0,23.03273320898418
+old_slope_original_no_costs,LOW,"Lowe's Companies, Inc.",stock,2,1,1,11.25914725246211
+old_slope_original_no_costs,MCD,McDonald's Corporation,stock,1,1,0,5.654420412752814
+old_slope_original_no_costs,SBUX,Starbucks Corporation,stock,2,1,1,18.33239886060982
+old_slope_original_no_costs,NKE,"NIKE, Inc.",stock,1,1,0,-49.71696439795399
+old_slope_original_no_costs,DIS,The Walt Disney Company,stock,0,0,0,21.49482720432532
+old_slope_original_no_costs,NFLX,"Netflix, Inc.",stock,2,2,0,95.33452096727653
+old_slope_original_no_costs,ORCL,Oracle Corporation,stock,3,2,1,34.92514007385943
+old_slope_original_no_costs,CSCO,"Cisco Systems, Inc.",stock,0,0,0,135.53757846844942
+old_slope_original_no_costs,IBM,International Business Machines Corporation,stock,0,0,0,112.20070819235394
+old_slope_original_no_costs,INTC,Intel Corporation,stock,3,1,2,277.8361658018153
+old_slope_original_no_costs,AMD,"Advanced Micro Devices, Inc.",stock,0,0,0,462.2453451571505
+old_slope_original_no_costs,QCOM,QUALCOMM Incorporated,stock,2,1,1,79.05011733996572
+old_slope_original_no_costs,TXN,Texas Instruments Incorporated,stock,2,1,1,101.79900645198438
+old_slope_original_no_costs,AVGO,Broadcom Inc.,stock,9,5,4,359.34252806597965
+old_slope_original_no_costs,CRM,"Salesforce, Inc.",stock,1,1,0,-19.559185666018276
+old_slope_original_no_costs,ADBE,Adobe Inc.,stock,1,1,0,-58.86527867325356
+old_slope_original_no_costs,AMAT,"Applied Materials, Inc.",stock,2,1,1,388.82823645891466
+old_slope_original_no_costs,LRCX,Lam Research Corporation,stock,3,1,2,547.2329631834989
+old_slope_original_no_costs,KLAC,KLA Corporation,stock,0,0,0,502.668145265418
+old_slope_original_no_costs,CAT,Caterpillar Inc.,stock,0,0,0,278.00197875957633
+old_slope_original_no_costs,DE,Deere & Company,stock,0,0,0,71.72510663212488
+old_slope_original_no_costs,HON,Honeywell International Inc.,stock,0,0,0,31.891792992638624
+old_slope_original_no_costs,UNP,Union Pacific Corporation,stock,0,0,0,41.14701432026955
+old_slope_original_no_costs,UPS,"United Parcel Service, Inc.",stock,0,0,0,-16.760151113412636
+old_slope_original_no_costs,FDX,FedEx Corporation,stock,0,0,0,57.82426785946917
+old_slope_original_no_costs,BA,Boeing Company,stock,0,0,0,10.555861822103573
+old_slope_original_no_costs,LMT,Lockheed Martin Corporation,stock,2,1,1,35.80942993629688
+old_slope_original_no_costs,CVX,Chevron Corporation,stock,0,0,0,11.987734695338247
+old_slope_original_no_costs,COP,ConocoPhillips,stock,0,0,0,-5.520076487577164
+old_slope_original_no_costs,SLB,Schlumberger Limited,stock,0,0,0,-17.928675599193344
+old_slope_original_no_costs,TSM,Taiwan Semiconductor Manufacturing Company Limited,adr,0,0,0,438.42925004184366
+old_slope_original_no_costs,ASML,ASML Holding N.V.,adr,2,1,1,221.40792753274096
+old_slope_original_no_costs,SAP,SAP SE,adr,0,0,0,24.712302284794063
+old_slope_original_no_costs,TM,Toyota Motor Corporation,adr,0,0,0,-4.078545796109201
+old_slope_original_no_costs,SONY,Sony Group Corporation,adr,0,0,0,24.25186688082299
+old_slope_original_no_costs,NVO,Novo Nordisk A/S,adr,2,2,0,-42.47214875929676
+old_slope_original_no_costs,AZN,AstraZeneca PLC,adr,0,0,0,42.88689552225355
+old_slope_original_no_costs,UL,Unilever PLC,adr,0,0,0,17.847110410743028
+old_slope_original_no_costs,BHP,BHP Group Limited,adr,0,0,0,58.88721713611302
+old_slope_original_no_costs,RIO,Rio Tinto Group,adr,0,0,0,70.3952162887718
+old_slope_original_no_costs,VALE,Vale S.A.,adr,0,0,0,38.1664130838981
+old_slope_original_no_costs,PBR,Petroleo Brasileiro S.A. - Petrobras,adr,0,0,0,45.09011706391788
+old_slope_original_no_costs,BP,BP p.l.c.,adr,0,0,0,9.19710650032628
+old_slope_original_no_costs,SHEL,Shell plc,adr,0,0,0,32.404159625897776
+old_slope_original_no_costs,TTE,TotalEnergies SE,adr,0,0,0,30.61195616269512
+old_slope_original_no_costs,HSBC,HSBC Holdings plc,adr,0,0,0,195.44013682742008
+old_slope_original_no_costs,RY,Royal Bank of Canada,adr,0,0,0,153.98641324342722
+old_slope_original_no_costs,TD,The Toronto-Dominion Bank,adr,0,0,0,124.31087467098392
+old_slope_original_no_costs,INFY,Infosys Limited,adr,0,0,0,-34.14886757955649
+old_slope_original_no_costs,MELI,"MercadoLibre, Inc.",adr,1,1,0,36.4326208103811
+old_slope_original_no_costs,ADAUSDT,Cardano,crypto,30,16,14,-37.15802368313598
+old_slope_original_no_costs,XRPUSDT,XRP,crypto,5,4,1,105.58375634517768
+old_slope_original_no_costs,DOGEUSDT,Dogecoin,crypto,40,24,16,17.392717815344618
+old_slope_original_no_costs,LTCUSDT,Litecoin,crypto,0,0,0,-33.64921547304645
+old_slope_original_no_costs,BCHUSDT,Bitcoin Cash,crypto,0,0,0,1.106833493743986
+old_slope_original_no_costs,LINKUSDT,Chainlink,crypto,23,12,11,5.748778384593267
+old_slope_original_no_costs,DOTUSDT,Polkadot,crypto,0,0,0,-79.37297835282409
+old_slope_original_no_costs,AVAXUSDT,Avalanche,crypto,1,1,0,-24.84780157835399

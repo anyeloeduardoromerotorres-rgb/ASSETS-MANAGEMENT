@@ -34,6 +34,7 @@ const suggestedExecutionSchema = new mongoose.Schema(
   {
     price: Number,
     capitalUsd: Number,
+    desiredCapitalUsd: Number,
     quantity: Number,
     valueFiat: Number,
     fiatCurrency: {
@@ -46,6 +47,10 @@ const suggestedExecutionSchema = new mongoose.Schema(
       enum: ["USD", "USD+SHV", "USDT", "INSUFFICIENT"],
     },
     requiresShvSale: {
+      type: Boolean,
+      default: false,
+    },
+    isPartialPosition: {
       type: Boolean,
       default: false,
     },

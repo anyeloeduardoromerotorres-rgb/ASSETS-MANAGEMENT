@@ -51,6 +51,7 @@ export async function getStockCashContext() {
   const shvUsd = shvPrice && shvPrice > 0 ? shvAmount * shvPrice : shvAmount;
   const availableUsdAfterOpen = Math.max(0, etoroUsd - openCapitalUsed);
   const availableCashUsd = Math.max(0, etoroUsd + shvUsd - openCapitalUsed);
+  const totalCapitalUsd = availableCashUsd + openCapitalUsed;
 
   return {
     marketGroup: "stocks",
@@ -61,11 +62,15 @@ export async function getStockCashContext() {
     openCapitalUsed,
     availableUsdAfterOpen,
     availableCashUsd,
+    totalCapitalUsd,
   };
 }
 
 export async function getCryptoCashContext() {
-  const balances = await getAllBalances();
+  const [balances, openCapitalUsed] = await Promise.all([
+    getAllBalances(),
+    getTrendRunnerOpenCapitalUsed("crypto"),
+  ]);
   const usdt = balances.find((balance) => balance.asset === "USDT");
   const availableUsdt = toFinite(usdt?.amount);
 
@@ -73,34 +78,47 @@ export async function getCryptoCashContext() {
     marketGroup: "crypto",
     availableUsdt,
     availableCashUsd: availableUsdt,
+    openCapitalUsed,
+    totalCapitalUsd: availableUsdt + openCapitalUsed,
   };
 }
 
-function targetCapitalFromAvailable(availableCashUsd) {
+function targetCapitalFromAvailable(context) {
+  const availableCashUsd = Math.max(0, toFinite(context?.availableCashUsd));
+  const totalCapitalUsd = Math.max(
+    availableCashUsd,
+    toFinite(context?.totalCapitalUsd, availableCashUsd)
+  );
+  const desiredCapitalUsd = Math.max(
+    TREND_RUNNER_PORTFOLIO.minPositionUsd,
+    totalCapitalUsd * (TREND_RUNNER_PORTFOLIO.positionPct / 100)
+  );
+
   if (availableCashUsd < TREND_RUNNER_PORTFOLIO.minPositionUsd) {
     return {
       targetCapitalUsd: 0,
+      desiredCapitalUsd,
+      isPartialPosition: false,
       canOpen: false,
       omissionReason: "capital_below_minimum",
     };
   }
 
-  const pctCapital = availableCashUsd * (TREND_RUNNER_PORTFOLIO.positionPct / 100);
-  const targetCapitalUsd = Math.max(
-    TREND_RUNNER_PORTFOLIO.minPositionUsd,
-    pctCapital
-  );
-
-  if (!TREND_RUNNER_PORTFOLIO.allowMargin && targetCapitalUsd > availableCashUsd) {
+  if (!TREND_RUNNER_PORTFOLIO.allowMargin && desiredCapitalUsd > availableCashUsd) {
+    const partialCapitalUsd = availableCashUsd;
     return {
-      targetCapitalUsd,
-      canOpen: false,
-      omissionReason: "insufficient_capital",
+      targetCapitalUsd: partialCapitalUsd,
+      desiredCapitalUsd,
+      isPartialPosition: true,
+      canOpen: true,
+      omissionReason: null,
     };
   }
 
   return {
-    targetCapitalUsd,
+    targetCapitalUsd: desiredCapitalUsd,
+    desiredCapitalUsd,
+    isPartialPosition: false,
     canOpen: true,
     omissionReason: null,
   };
@@ -117,7 +135,7 @@ export async function resolveCapitalForSignal(asset, price) {
 
   if (asset.market === "crypto") {
     const context = await getCryptoCashContext();
-    const target = targetCapitalFromAvailable(context.availableUsdt);
+    const target = targetCapitalFromAvailable(context);
     if (!target.canOpen) {
       return {
         ...context,
@@ -140,7 +158,7 @@ export async function resolveCapitalForSignal(asset, price) {
   }
 
   const context = await getStockCashContext();
-  const target = targetCapitalFromAvailable(context.availableCashUsd);
+  const target = targetCapitalFromAvailable(context);
 
   if (!target.canOpen) {
     return {

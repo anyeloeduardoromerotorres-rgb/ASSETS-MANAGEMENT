@@ -1,0 +1,4 @@
+strategy,startDate,endDate,years,initialCash,finalEquity,netProfit,totalReturnPct,cagrPct,maxDrawdownPct,maxDrawdownDate,trades,buys,sells,winRatePct,profitFactor,averageTradePct,medianTradePct,averageDaysHeld,maxOpenPositions,avgOpenPositions,avgDeployedPct,feesPaid,signalsDetected,skippedEntries
+final_trend_runner_fresh_common_period,2023-09-22,2026-07-01,2.77,1100,1943.44,843.44,76.68,22.78,-16.64,2025-04-16,407,407,769,35.87,2.937,5.95,-3.02,81.1,40,32.62,88.91,15.62,3672,3265
+old_slope_costed,2023-09-22,2026-07-01,2.77,1100,1628.18,528.18,48.02,15.19,-25.4,2026-06-25,271,156,115,,,,,,44,22.93,36.93,2.07,,
+old_slope_original_no_costs,2023-09-22,2026-07-01,2.77,1100,1632.52,532.52,48.41,15.3,-25.37,2026-06-25,271,156,115,,,,,,44,22.93,36.93,0,,

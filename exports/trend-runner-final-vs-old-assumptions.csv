@@ -1,0 +1,17 @@
+key,value
+initialCash,1100
+backtestEndDate,2026-07-01
+final.positionPct,2.75
+final.minPositionUsd,20
+final.minEntryHoldScore,70
+final.minReentryHoldScore,90
+final.globalRegimeFilter,equity uses SPY/QQQ; crypto uses BTCUSDT; daily EMA200 or completed weekly EMA200 below = bear
+final.globalBearRule,bear regime allows only Pullback + Breakout with Hold Score >= 90; reentry disabled
+final.historyRule,stocks/ETFs approx 15y; crypto approx 7y; otherwise ignored
+final.entryExecution,"next daily open after signal, with slippage"
+final.incompleteDailyBars,ignored
+old.logic,"slope/range allocation, daily rebalance, min 3y history"
+old.years,1
+old.slopeLowLimit,0.9
+commissionRate,0.0005
+slippageBps,5

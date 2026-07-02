@@ -119,11 +119,14 @@ function buildNotificationForSignal(signal) {
 
   const capital = toFinite(signal.suggested?.capitalUsd);
   const shvNote = signal.suggested?.requiresShvSale ? " Requiere vender SHV." : "";
+  const partialNote = signal.suggested?.isPartialPosition
+    ? ` Posicion parcial; objetivo $${toFinite(signal.suggested?.desiredCapitalUsd).toFixed(2)}.`
+    : "";
   return {
     title: `Trend Runner entrada: ${signal.symbol}`,
     body: `${signal.signalType}. Hold Score ${toFinite(signal.hold?.score).toFixed(
       1
-    )}. Capital sugerido $${capital.toFixed(2)}.${shvNote}`,
+    )}. Capital sugerido $${capital.toFixed(2)}.${partialNote}${shvNote}`,
   };
 }
 
@@ -228,6 +231,8 @@ async function upsertOmittedOpenSignal(asset, analysis, capital, price) {
       hold: holdSnapshot(analysis.hold),
       suggested: {
         price,
+        desiredCapitalUsd: capital.desiredCapitalUsd,
+        isPartialPosition: false,
         capitalSource: "INSUFFICIENT",
         fiatCurrency: asset.quoteCurrency,
         availableCashUsd: capital.availableCashUsd,
@@ -282,11 +287,13 @@ async function upsertActiveOpenSignal(asset, analysis, capital, price) {
     suggested: {
       price,
       capitalUsd: capital.targetCapitalUsd,
+      desiredCapitalUsd: capital.desiredCapitalUsd,
       quantity: suggestedQuantity,
       valueFiat: capital.targetCapitalUsd,
       fiatCurrency: capital.fiatCurrency,
       capitalSource: capital.capitalSource,
       requiresShvSale: capital.requiresShvSale,
+      isPartialPosition: capital.isPartialPosition,
       availableCashUsd: capital.availableCashUsd,
       availableUsd: capital.availableUsdAfterOpen,
       availableShvUsd: capital.shvUsd,

@@ -1,0 +1,153 @@
+symbol,name,market,firstDate,lastDate,bars,requiredBars,finalEligible,oldEligible,error,reason
+SPY,SPDR S&P 500 ETF Trust,etf,1993-01-29,2026-07-01,8412,3790,true,true,,ok
+QQQ,Invesco QQQ Trust,etf,1999-03-10,2026-07-01,6870,3790,true,true,,ok
+IWM,iShares Russell 2000 ETF,etf,2000-05-26,2026-07-01,6562,3790,true,true,,ok
+GLD,SPDR Gold Shares,etf,2004-11-18,2026-07-01,5437,3790,true,true,,ok
+TLT,iShares 20+ Year Treasury Bond ETF,etf,2002-07-30,2026-07-01,6019,3790,true,true,,ok
+XLE,Energy Select Sector SPDR Fund,etf,1998-12-22,2026-07-01,6922,3790,true,true,,ok
+XLV,Health Care Select Sector SPDR Fund,etf,1998-12-22,2026-07-01,6922,3790,true,true,,ok
+VOO,Vanguard S&P 500 ETF,etf,2010-09-09,2026-07-01,3976,3790,true,true,,ok
+SCHD,Schwab U.S. Dividend Equity ETF,etf,2011-10-20,2026-07-01,3694,3790,false,true,,insufficient_final_history
+GLDM,SPDR Gold MiniShares Trust,etf,2018-06-26,2026-07-01,2014,3790,false,true,,insufficient_final_history
+AAPL,Apple Inc.,stock,1980-12-12,2026-07-01,11479,3790,true,true,,ok
+MSFT,Microsoft Corporation,stock,1986-03-13,2026-07-01,10153,3790,true,true,,ok
+NVDA,NVIDIA Corporation,stock,1999-01-22,2026-07-01,6902,3790,true,true,,ok
+AMZN,"Amazon.com, Inc.",stock,1997-05-15,2026-07-01,7327,3790,true,true,,ok
+JPM,JPMorgan Chase & Co.,stock,1980-03-17,2026-07-01,11667,3790,true,true,,ok
+XOM,Exxon Mobil Corporation,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+KO,The Coca-Cola Company,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+WMT,Walmart Inc.,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+BRK-B,Berkshire Hathaway Inc. Class B,stock,1996-05-09,2026-07-01,7584,3790,true,true,,ok
+META,"Meta Platforms, Inc.",stock,2012-05-18,2026-07-01,3549,3790,false,true,,insufficient_final_history
+BTCUSDT,Bitcoin,crypto,2017-08-17,2026-07-01,3241,2565,true,true,,ok
+ETHUSDT,Ethereum,crypto,2017-08-17,2026-07-01,3241,2565,true,true,,ok
+BNBUSDT,BNB,crypto,2017-11-06,2026-07-01,3160,2565,true,true,,ok
+SOLUSDT,Solana,crypto,2020-08-11,2026-07-01,2151,2565,false,true,,insufficient_final_history
+DIA,SPDR Dow Jones Industrial Average ETF Trust,etf,1998-01-20,2026-07-01,7156,3790,true,true,,ok
+MDY,SPDR S&P MidCap 400 ETF Trust,etf,1995-05-04,2026-07-01,7841,3790,true,true,,ok
+VTI,Vanguard Total Stock Market ETF,etf,2001-06-15,2026-07-01,6297,3790,true,true,,ok
+VEA,Vanguard FTSE Developed Markets ETF,etf,2007-07-26,2026-07-01,4763,3790,true,true,,ok
+VWO,Vanguard FTSE Emerging Markets ETF,etf,2005-03-10,2026-07-01,5361,3790,true,true,,ok
+EFA,iShares MSCI EAFE ETF,etf,2001-08-27,2026-07-01,6247,3790,true,true,,ok
+EEM,iShares MSCI Emerging Markets ETF,etf,2003-04-14,2026-07-01,5841,3790,true,true,,ok
+EWJ,iShares MSCI Japan ETF,etf,1996-03-18,2026-07-01,7621,3790,true,true,,ok
+EWU,iShares MSCI United Kingdom ETF,etf,1996-03-18,2026-07-01,7621,3790,true,true,,ok
+EWG,iShares MSCI Germany ETF,etf,1996-03-18,2026-07-01,7621,3790,true,true,,ok
+EWC,iShares MSCI Canada ETF,etf,1996-03-18,2026-07-01,7621,3790,true,true,,ok
+EWA,iShares MSCI Australia ETF,etf,1996-03-18,2026-07-01,7621,3790,true,true,,ok
+EWY,iShares MSCI South Korea ETF,etf,2000-05-12,2026-07-01,6572,3790,true,true,,ok
+EWZ,iShares MSCI Brazil ETF,etf,2000-07-14,2026-07-01,6529,3790,true,true,,ok
+EWT,iShares MSCI Taiwan ETF,etf,2000-06-23,2026-07-01,6543,3790,true,true,,ok
+EWW,iShares MSCI Mexico ETF,etf,1996-03-18,2026-07-01,7621,3790,true,true,,ok
+FXI,iShares China Large-Cap ETF,etf,2004-10-08,2026-07-01,5466,3790,true,true,,ok
+XLF,Financial Select Sector SPDR Fund,etf,1998-12-22,2026-07-01,6922,3790,true,true,,ok
+XLK,Technology Select Sector SPDR Fund,etf,1998-12-22,2026-07-01,6922,3790,true,true,,ok
+XLY,Consumer Discretionary Select Sector SPDR Fund,etf,1998-12-22,2026-07-01,6922,3790,true,true,,ok
+XLP,Consumer Staples Select Sector SPDR Fund,etf,1998-12-22,2026-07-01,6922,3790,true,true,,ok
+XLU,Utilities Select Sector SPDR Fund,etf,1998-12-22,2026-07-01,6922,3790,true,true,,ok
+XLI,Industrial Select Sector SPDR Fund,etf,1998-12-22,2026-07-01,6922,3790,true,true,,ok
+XLB,Materials Select Sector SPDR Fund,etf,1998-12-22,2026-07-01,6922,3790,true,true,,ok
+SMH,VanEck Semiconductor ETF,etf,2000-06-05,2026-07-01,6557,3790,true,true,,ok
+IBB,iShares Biotechnology ETF,etf,2001-02-12,2026-07-01,6383,3790,true,true,,ok
+XBI,SPDR S&P Biotech ETF,etf,2006-02-06,2026-07-01,5132,3790,true,true,,ok
+XRT,SPDR S&P Retail ETF,etf,2006-06-22,2026-07-01,5037,3790,true,true,,ok
+KRE,SPDR S&P Regional Banking ETF,etf,2006-06-22,2026-07-01,5037,3790,true,true,,ok
+ITB,iShares U.S. Home Construction ETF,etf,2006-05-05,2026-07-01,5070,3790,true,true,,ok
+XHB,SPDR S&P Homebuilders ETF,etf,2006-02-06,2026-07-01,5132,3790,true,true,,ok
+GDX,VanEck Gold Miners ETF,etf,2006-05-22,2026-07-01,5059,3790,true,true,,ok
+GDXJ,VanEck Junior Gold Miners ETF,etf,2009-11-11,2026-07-01,4183,3790,true,true,,ok
+VNQ,Vanguard Real Estate ETF,etf,2004-09-29,2026-07-01,5473,3790,true,true,,ok
+SLV,iShares Silver Trust,etf,2006-04-28,2026-07-01,5075,3790,true,true,,ok
+USO,United States Oil Fund,etf,2006-04-10,2026-07-01,5088,3790,true,true,,ok
+DBC,Invesco DB Commodity Index Tracking Fund,etf,2006-02-06,2026-07-01,5132,3790,true,true,,ok
+IEF,iShares 7-10 Year Treasury Bond ETF,etf,2002-07-30,2026-07-01,6019,3790,true,true,,ok
+SHY,iShares 1-3 Year Treasury Bond ETF,etf,2002-07-30,2026-07-01,6019,3790,true,true,,ok
+TIP,iShares TIPS Bond ETF,etf,2003-12-05,2026-07-01,5677,3790,true,true,,ok
+AGG,iShares Core U.S. Aggregate Bond ETF,etf,2003-09-29,2026-07-01,5725,3790,true,true,,ok
+BND,Vanguard Total Bond Market ETF,etf,2007-04-10,2026-07-01,4838,3790,true,true,,ok
+LQD,iShares iBoxx Investment Grade Corporate Bond ETF,etf,2002-07-30,2026-07-01,6019,3790,true,true,,ok
+HYG,iShares iBoxx High Yield Corporate Bond ETF,etf,2007-04-11,2026-07-01,4837,3790,true,true,,ok
+EMB,iShares J.P. Morgan USD Emerging Markets Bond ETF,etf,2007-12-19,2026-07-01,4661,3790,true,true,,ok
+GOOGL,Alphabet Inc. Class A,stock,2004-08-19,2026-07-01,5501,3790,true,true,,ok
+GOOG,Alphabet Inc. Class C,stock,2004-08-19,2026-07-01,5501,3790,true,true,,ok
+TSLA,"Tesla, Inc.",stock,2010-06-29,2026-07-01,4026,3790,true,true,,ok
+BAC,Bank of America Corporation,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+WFC,Wells Fargo & Company,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+GS,"Goldman Sachs Group, Inc.",stock,1999-05-04,2026-07-01,6832,3790,true,true,,ok
+MS,Morgan Stanley,stock,1993-02-23,2026-07-01,8396,3790,true,true,,ok
+V,Visa Inc.,stock,2008-03-19,2026-07-01,4600,3790,true,true,,ok
+MA,Mastercard Incorporated,stock,2006-05-25,2026-07-01,5056,3790,true,true,,ok
+AXP,American Express Company,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+UNH,UnitedHealth Group Incorporated,stock,1984-10-17,2026-07-01,10506,3790,true,true,,ok
+JNJ,Johnson & Johnson,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+PFE,Pfizer Inc.,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+MRK,"Merck & Co., Inc.",stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+ABT,Abbott Laboratories,stock,1980-03-17,2026-07-01,11667,3790,true,true,,ok
+TMO,Thermo Fisher Scientific Inc.,stock,1980-03-17,2026-07-01,11667,3790,true,true,,ok
+DHR,Danaher Corporation,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+MDT,Medtronic plc,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+ISRG,"Intuitive Surgical, Inc.",stock,2000-06-16,2026-07-01,6548,3790,true,true,,ok
+AMGN,Amgen Inc.,stock,1983-06-17,2026-07-01,10844,3790,true,true,,ok
+LLY,Eli Lilly and Company,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+PG,Procter & Gamble Company,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+PEP,"PepsiCo, Inc.",stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+COST,Costco Wholesale Corporation,stock,1986-07-09,2026-07-01,10072,3790,true,true,,ok
+HD,"The Home Depot, Inc.",stock,1981-09-22,2026-07-01,11284,3790,true,true,,ok
+LOW,"Lowe's Companies, Inc.",stock,1980-03-17,2026-07-01,11667,3790,true,true,,ok
+MCD,McDonald's Corporation,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+SBUX,Starbucks Corporation,stock,1992-06-26,2026-07-01,8562,3790,true,true,,ok
+NKE,"NIKE, Inc.",stock,1980-12-02,2026-07-01,11487,3790,true,true,,ok
+DIS,The Walt Disney Company,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+NFLX,"Netflix, Inc.",stock,2002-05-23,2026-07-01,6065,3790,true,true,,ok
+ORCL,Oracle Corporation,stock,1986-03-12,2026-07-01,10154,3790,true,true,,ok
+CSCO,"Cisco Systems, Inc.",stock,1990-02-16,2026-07-01,9158,3790,true,true,,ok
+IBM,International Business Machines Corporation,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+INTC,Intel Corporation,stock,1980-03-17,2026-07-01,11667,3790,true,true,,ok
+AMD,"Advanced Micro Devices, Inc.",stock,1980-03-17,2026-07-01,11667,3790,true,true,,ok
+QCOM,QUALCOMM Incorporated,stock,1991-12-13,2026-07-01,8697,3790,true,true,,ok
+TXN,Texas Instruments Incorporated,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+AVGO,Broadcom Inc.,stock,2009-08-06,2026-07-01,4251,3790,true,true,,ok
+CRM,"Salesforce, Inc.",stock,2004-06-23,2026-07-01,5541,3790,true,true,,ok
+ADBE,Adobe Inc.,stock,1986-08-13,2026-07-01,10047,3790,true,true,,ok
+AMAT,"Applied Materials, Inc.",stock,1980-03-17,2026-07-01,11667,3790,true,true,,ok
+LRCX,Lam Research Corporation,stock,1984-05-04,2026-07-01,10621,3790,true,true,,ok
+KLAC,KLA Corporation,stock,1980-10-08,2026-07-01,11524,3790,true,true,,ok
+CAT,Caterpillar Inc.,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+DE,Deere & Company,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+HON,Honeywell International Inc.,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+UNP,Union Pacific Corporation,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+UPS,"United Parcel Service, Inc.",stock,1999-11-10,2026-07-01,6699,3790,true,true,,ok
+FDX,FedEx Corporation,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+BA,Boeing Company,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+LMT,Lockheed Martin Corporation,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+CVX,Chevron Corporation,stock,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+COP,ConocoPhillips,stock,1981-12-31,2026-07-01,11214,3790,true,true,,ok
+SLB,Schlumberger Limited,stock,1981-12-31,2026-07-01,11214,3790,true,true,,ok
+TSM,Taiwan Semiconductor Manufacturing Company Limited,adr,1997-10-09,2026-07-01,7225,3790,true,true,,ok
+ASML,ASML Holding N.V.,adr,1995-03-15,2026-07-01,7876,3790,true,true,,ok
+SAP,SAP SE,adr,1995-09-18,2026-07-01,7747,3790,true,true,,ok
+TM,Toyota Motor Corporation,adr,1980-03-17,2026-07-01,11667,3790,true,true,,ok
+SONY,Sony Group Corporation,adr,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+NVO,Novo Nordisk A/S,adr,1981-04-30,2026-07-01,11384,3790,true,true,,ok
+AZN,AstraZeneca PLC,adr,1993-05-12,2026-07-01,8341,3790,true,true,,ok
+UL,Unilever PLC,adr,1980-03-25,2026-07-01,11661,3790,true,true,,ok
+BHP,BHP Group Limited,adr,1980-03-17,2026-07-01,11667,3790,true,true,,ok
+RIO,Rio Tinto Group,adr,1990-06-28,2026-07-01,9067,3790,true,true,,ok
+VALE,Vale S.A.,adr,2002-03-21,2026-07-01,6109,3790,true,true,,ok
+PBR,Petroleo Brasileiro S.A. - Petrobras,adr,2000-08-10,2026-07-01,6510,3790,true,true,,ok
+BP,BP p.l.c.,adr,1980-01-02,2026-07-01,11719,3790,true,true,,ok
+SHEL,Shell plc,adr,1984-03-12,2026-07-01,10659,3790,true,true,,ok
+TTE,TotalEnergies SE,adr,1991-10-25,2026-07-01,8731,3790,true,true,,ok
+HSBC,HSBC Holdings plc,adr,1999-07-16,2026-07-01,6781,3790,true,true,,ok
+RY,Royal Bank of Canada,adr,1995-10-16,2026-07-01,7727,3790,true,true,,ok
+TD,The Toronto-Dominion Bank,adr,1996-08-30,2026-07-01,7505,3790,true,true,,ok
+INFY,Infosys Limited,adr,1999-03-11,2026-07-01,6869,3790,true,true,,ok
+MELI,"MercadoLibre, Inc.",adr,2007-08-10,2026-07-01,4752,3790,true,true,,ok
+ADAUSDT,Cardano,crypto,2018-04-17,2026-07-01,2998,2565,true,true,,ok
+XRPUSDT,XRP,crypto,2018-05-04,2026-07-01,2981,2565,true,true,,ok
+DOGEUSDT,Dogecoin,crypto,2019-07-05,2026-07-01,2554,2565,false,true,,insufficient_final_history
+LTCUSDT,Litecoin,crypto,2017-12-13,2026-07-01,3123,2565,true,true,,ok
+BCHUSDT,Bitcoin Cash,crypto,2019-11-28,2026-07-01,2408,2565,false,true,,insufficient_final_history
+LINKUSDT,Chainlink,crypto,2019-01-16,2026-07-01,2724,2565,true,true,,ok
+DOTUSDT,Polkadot,crypto,2020-08-18,2026-07-01,2144,2565,false,true,,insufficient_final_history
+AVAXUSDT,Avalanche,crypto,2020-09-22,2026-07-01,2109,2565,false,true,,insufficient_final_history

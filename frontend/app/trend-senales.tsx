@@ -40,11 +40,13 @@ type TrendSignal = {
   suggested?: {
     price?: number;
     capitalUsd?: number;
+    desiredCapitalUsd?: number;
     quantity?: number;
     valueFiat?: number;
     fiatCurrency?: string;
     capitalSource?: string;
     requiresShvSale?: boolean;
+    isPartialPosition?: boolean;
     availableCashUsd?: number;
     availableUsd?: number;
     availableShvUsd?: number;
@@ -584,6 +586,11 @@ export default function TrendRunnerSignalsScreen() {
               {signal.side === "open" ? (
                 <>
                   <Text style={styles.rowText}>Capital: ${fmt(signal.suggested?.capitalUsd)} · Cantidad {fmt(signal.suggested?.quantity, 8)}</Text>
+                  {signal.suggested?.isPartialPosition ? (
+                    <Text style={styles.rowText}>
+                      Posición parcial: objetivo ${fmt(signal.suggested?.desiredCapitalUsd)} · disponible usado ${fmt(signal.suggested?.capitalUsd)}
+                    </Text>
+                  ) : null}
                   <Text style={styles.rowText}>Fuente: {signal.suggested?.capitalSource ?? "-"}{signal.suggested?.requiresShvSale ? " · vender SHV" : ""}</Text>
                   <Text style={styles.rowText}>Stop inicial: {fmt(signal.parameters?.initialStop, 6)} · TP1: {fmt(signal.parameters?.tp1Price, 6)}</Text>
                   <Text style={styles.rowText}>

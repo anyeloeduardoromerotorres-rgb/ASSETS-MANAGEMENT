@@ -1,0 +1,5 @@
+group,trades,winners,losers,winRatePct,netPnl,profitFactor,averageTradePct,medianTradePct,averageDaysHeld
+stock,2259,728,1531,32.23,4290.47,1.806,2.63,-3.4,82.1
+adr,526,163,363,30.99,1027.26,1.975,2.17,-3.06,68.1
+etf,416,130,286,31.25,624.72,1.722,1.65,-2.46,80.4
+crypto,3,0,3,0,-37.76,0,-9.31,-8.32,18.7

@@ -1,0 +1,5 @@
+group,trades,winners,losers,winRatePct,netPnl,profitFactor,averageTradePct,medianTradePct,averageDaysHeld
+Pullback,2225,689,1536,30.97,3374.67,1.691,2.17,-3.08,76.7
+Pullback + Breakout,757,264,493,34.87,2262.61,2.21,3.15,-3.18,88.6
+Reentrada,173,50,123,28.9,148.48,1.352,1.72,-3.12,73.4
+Breakout,49,18,31,36.73,118.93,2.15,4.58,-3.42,86.4
