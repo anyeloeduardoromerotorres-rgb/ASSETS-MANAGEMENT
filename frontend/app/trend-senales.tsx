@@ -117,6 +117,14 @@ const parseInput = (value: string) => {
   return Number.isFinite(parsed) ? parsed : NaN;
 };
 
+const calculateTp1Quantity = (signal: TrendSignal) => {
+  const quantity = signal.suggested?.quantity;
+  const tp1Pct = signal.parameters?.tp1QtyPct;
+
+  if (!Number.isFinite(quantity) || !Number.isFinite(tp1Pct)) return undefined;
+  return Number(quantity) * (Number(tp1Pct) / 100);
+};
+
 const positionIdFromSignal = (signal: TrendSignal) => {
   if (!signal.position) return null;
   if (typeof signal.position === "string") return signal.position;
@@ -558,6 +566,12 @@ export default function TrendRunnerSignalsScreen() {
                   <Text style={styles.rowText}>Capital: ${fmt(signal.suggested?.capitalUsd)} · Cantidad {fmt(signal.suggested?.quantity, 8)}</Text>
                   <Text style={styles.rowText}>Fuente: {signal.suggested?.capitalSource ?? "-"}{signal.suggested?.requiresShvSale ? " · vender SHV" : ""}</Text>
                   <Text style={styles.rowText}>Stop inicial: {fmt(signal.parameters?.initialStop, 6)} · TP1: {fmt(signal.parameters?.tp1Price, 6)}</Text>
+                  <Text style={styles.rowText}>
+                    Vender en TP1: {fmt(signal.parameters?.tp1QtyPct, 1)}% · Cantidad aprox. {fmt(calculateTp1Quantity(signal), 8)}
+                  </Text>
+                  <Text style={styles.rowText}>
+                    Dejar correr: {fmt(100 - Number(signal.parameters?.tp1QtyPct ?? NaN), 1)}% con trailing stop
+                  </Text>
                 </>
               ) : (
                 <>
