@@ -17,6 +17,12 @@ import api, { API_BASE_URL, API_DEBUG_INFO } from "../constants/api";
 type TrendSignal = {
   _id: string;
   symbol: string;
+  asset?: {
+    _id?: string;
+    symbol?: string;
+    displaySymbol?: string;
+    name?: string;
+  };
   market: "etf" | "stock" | "adr" | "crypto";
   side: "open" | "close";
   status: string;
@@ -123,6 +129,16 @@ const calculateTp1Quantity = (signal: TrendSignal) => {
 
   if (!Number.isFinite(quantity) || !Number.isFinite(tp1Pct)) return undefined;
   return Number(quantity) * (Number(tp1Pct) / 100);
+};
+
+const assetNameFromSignal = (signal: TrendSignal) => {
+  const name = signal.asset?.name?.trim();
+  if (name) return name;
+
+  const displaySymbol = signal.asset?.displaySymbol?.trim();
+  if (displaySymbol && displaySymbol !== signal.symbol) return displaySymbol;
+
+  return null;
 };
 
 const positionIdFromSignal = (signal: TrendSignal) => {
@@ -550,6 +566,9 @@ export default function TrendRunnerSignalsScreen() {
               <View style={styles.cardHeader}>
                 <View>
                   <Text style={styles.symbol}>{signal.symbol}</Text>
+                  {assetNameFromSignal(signal) ? (
+                    <Text style={styles.assetName}>{assetNameFromSignal(signal)}</Text>
+                  ) : null}
                   <Text style={styles.meta}>
                     {signal.side === "open" ? "Apertura" : "Cierre"} · {signal.market.toUpperCase()}
                   </Text>
@@ -688,6 +707,7 @@ const styles = StyleSheet.create({
   card: { borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, padding: 14, backgroundColor: "#fafafa", gap: 6 },
   cardHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 8 },
   symbol: { fontSize: 19, fontWeight: "800" },
+  assetName: { fontSize: 13, color: "#37474f", marginTop: 2, maxWidth: 210 },
   meta: { fontSize: 12, color: "#607d8b", marginTop: 2 },
   sideBadge: { maxWidth: "55%", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: "#e3f2fd", color: "#0d47a1", fontWeight: "700", textAlign: "right" },
   closeBadge: { backgroundColor: "#ffebee", color: "#b71c1c" },
