@@ -22,7 +22,6 @@ const EPSILON = 1e-10;
 const SETTINGS = {
   initialCash: 1100,
   backtestEndDate: isoDate(new Date(Date.now() - DAY_MS)),
-  globalBearMinHoldScore: 90,
   oldMinHistoryYears: 3,
   oldYears: 1,
   oldSlopeLowLimit: 0.9,
@@ -779,7 +778,7 @@ function executeFinalPortfolio(candidates, {
       if (marketRegime.bearish) {
         const restrictedSignalAllowed = (
           signalType === "Pullback + Breakout"
-          && hold.score >= SETTINGS.globalBearMinHoldScore
+          && hold.score >= P.globalBearMinHoldScore
         );
         if (!restrictedSignalAllowed) {
           skipped.push({
@@ -1487,7 +1486,7 @@ async function main() {
     { key: "final.minEntryHoldScore", value: P.minEntryHoldScore },
     { key: "final.minReentryHoldScore", value: P.minReentryHoldScore },
     { key: "final.globalRegimeFilter", value: "equity uses SPY/QQQ; crypto uses BTCUSDT; daily EMA200 or completed weekly EMA200 below = bear" },
-    { key: "final.globalBearRule", value: `bear regime allows only Pullback + Breakout with Hold Score >= ${SETTINGS.globalBearMinHoldScore}; reentry disabled` },
+    { key: "final.globalBearRule", value: `bear regime allows only Pullback + Breakout with Hold Score >= ${P.globalBearMinHoldScore}; reentry disabled` },
     { key: "final.historyRule", value: "stocks/ETFs approx 15y; crypto approx 7y; otherwise ignored" },
     { key: "final.entryExecution", value: "next daily open after signal, with slippage" },
     { key: "final.incompleteDailyBars", value: "ignored" },

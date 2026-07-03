@@ -59,6 +59,16 @@ type TrendSignal = {
     tp1QtyPct?: number;
     trailAtr?: number;
   };
+  quality?: {
+    score?: number;
+    grade?: string;
+    holdScoreComponent?: number;
+    signalTypeScore?: number;
+    riskScore?: number;
+    capitalScore?: number;
+    stopDistancePct?: number;
+    capitalRatio?: number;
+  };
   position?: string | { _id: string };
 };
 
@@ -259,7 +269,20 @@ export default function TrendRunnerSignalsScreen() {
   );
 
   const visibleSignals = useMemo(() => {
-    return signals.filter((signal) => filter === "all" || signal.side === filter);
+    return signals
+      .filter((signal) => filter === "all" || signal.side === filter)
+      .slice()
+      .sort((left, right) => {
+        if (filter === "all" && left.side !== right.side) {
+          return left.side === "close" ? -1 : 1;
+        }
+
+        if (left.side === "open" && right.side === "open") {
+          return Number(right.quality?.score ?? -1) - Number(left.quality?.score ?? -1);
+        }
+
+        return new Date(right.detectedAt ?? 0).getTime() - new Date(left.detectedAt ?? 0).getTime();
+      });
   }, [signals, filter]);
 
   const scanStatusText = useMemo(() => {
@@ -582,6 +605,11 @@ export default function TrendRunnerSignalsScreen() {
               </View>
 
               <Text style={styles.rowText}>Hold Score: {fmt(signal.hold?.score, 1)}</Text>
+              {signal.side === "open" && signal.quality?.score != null ? (
+                <Text style={styles.rowText}>
+                  Calidad: {signal.quality.grade ?? "-"} · {fmt(signal.quality.score, 1)}/100
+                </Text>
+              ) : null}
               <Text style={styles.rowText}>Precio sugerido: {fmt(signal.suggested?.price, 6)} {signal.suggested?.fiatCurrency ?? ""}</Text>
               {signal.side === "open" ? (
                 <>

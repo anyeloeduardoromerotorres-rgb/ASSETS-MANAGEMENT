@@ -17,6 +17,11 @@ import {
   fetchLatestPriceForAsset,
 } from "./trendRunnerMarketData.service.js";
 import { resolveCapitalForSignal } from "./trendRunnerCapital.service.js";
+import {
+  buildTrendRunnerGlobalRegimeContext,
+  evaluateTrendRunnerGlobalRegime,
+} from "./trendRunnerGlobalRegime.service.js";
+import { buildTrendRunnerSignalQualityFromOpenAnalysis } from "./trendRunnerSignalQuality.service.js";
 import { sendTrendRunnerPush } from "./trendRunnerNotification.service.js";
 
 const STOCK_MARKETS = new Set(["etf", "stock", "adr"]);
@@ -122,11 +127,14 @@ function buildNotificationForSignal(signal) {
   const partialNote = signal.suggested?.isPartialPosition
     ? ` Posicion parcial; objetivo $${toFinite(signal.suggested?.desiredCapitalUsd).toFixed(2)}.`
     : "";
+  const qualityNote = signal.quality?.score
+    ? ` Calidad ${signal.quality.grade ?? "-"} ${toFinite(signal.quality.score).toFixed(1)}.`
+    : "";
   return {
     title: `Trend Runner entrada: ${signal.symbol}`,
     body: `${signal.signalType}. Hold Score ${toFinite(signal.hold?.score).toFixed(
       1
-    )}. Capital sugerido $${capital.toFixed(2)}.${partialNote}${shvNote}`,
+    )}.${qualityNote} Capital sugerido $${capital.toFixed(2)}.${partialNote}${shvNote}`,
   };
 }
 
@@ -261,6 +269,12 @@ async function upsertActiveOpenSignal(asset, analysis, capital, price) {
   });
   const signalDateKey = analysis.latestBar?.date ?? isoDate(new Date());
   const suggestedQuantity = capital.suggestedQuantity;
+  const quality = buildTrendRunnerSignalQualityFromOpenAnalysis({
+    analysis,
+    params,
+    capital,
+    price,
+  });
 
   let signal = await TrendRunnerSignal.findOne({
     symbol: asset.symbol,
@@ -284,6 +298,7 @@ async function upsertActiveOpenSignal(asset, analysis, capital, price) {
     lastCheckedAt: new Date(),
     hold: holdSnapshot(analysis.hold),
     parameters: params,
+    quality,
     suggested: {
       price,
       capitalUsd: capital.targetCapitalUsd,
@@ -322,8 +337,12 @@ async function upsertActiveOpenSignal(asset, analysis, capital, price) {
   return signal;
 }
 
-export async function scanOneAssetForOpenSignal(asset) {
+export async function scanOneAssetForOpenSignal(asset, { globalRegimeContext = null } = {}) {
   try {
+    const regimeContext = globalRegimeContext
+      ?? await buildTrendRunnerGlobalRegimeContext({
+        market: asset.market === "crypto" ? "crypto" : "stocks",
+      });
     const bars = await fetchDailyBarsForAsset(asset);
     const analysis = analyzeBars(asset, bars);
     await updateAssetScanMetadata(asset, analysis);
@@ -350,6 +369,29 @@ export async function scanOneAssetForOpenSignal(asset) {
         "conditions_not_met"
       );
       return { symbol: asset.symbol, status: "none" };
+    }
+
+    const globalRegime = evaluateTrendRunnerGlobalRegime(asset, analysis, regimeContext);
+    if (!globalRegime.allowed) {
+      await deactivateActiveSignals(
+        { symbol: asset.symbol, side: "open" },
+        globalRegime.reason
+      );
+      return {
+        symbol: asset.symbol,
+        status: "skipped",
+        reason: globalRegime.reason,
+        globalRegime: {
+          bearish: globalRegime.bearish,
+          reason: globalRegime.regime?.reason,
+          benchmarks: globalRegime.regime?.benchmarks?.map((benchmark) => ({
+            symbol: benchmark.symbol,
+            available: benchmark.available,
+            bearish: benchmark.bearish,
+            reason: benchmark.reason,
+          })),
+        },
+      };
     }
 
     const price = adversePrice(analysis.latestBar.close, "buy");
@@ -384,6 +426,7 @@ export async function scanOneAssetForOpenSignal(asset) {
 
 export async function scanOpenSignals({ market = "all" } = {}) {
   await seedTrendRunnerUniverse();
+  const globalRegimeContext = await buildTrendRunnerGlobalRegimeContext({ market });
   const assets = await TrendRunnerAsset.find({
     enabled: true,
     ...normalizeMarketFilter(market),
@@ -391,13 +434,14 @@ export async function scanOpenSignals({ market = "all" } = {}) {
 
   const results = [];
   for (const asset of assets) {
-    results.push(await scanOneAssetForOpenSignal(asset));
+    results.push(await scanOneAssetForOpenSignal(asset, { globalRegimeContext }));
   }
 
   return {
     scanned: assets.length,
     active: results.filter((row) => row.status === "active").length,
     omitted: results.filter((row) => row.status === "omitted").length,
+    skipped: results.filter((row) => row.status === "skipped").length,
     ignored: results.filter((row) => row.status === "ignored").length,
     errors: results.filter((row) => row.status === "error").length,
     results,
@@ -413,6 +457,7 @@ export async function refreshActiveOpenSignals({ market = "all" } = {}) {
   if (market === "crypto") query.market = "crypto";
   if (market === "stocks") query.market = { $in: [...STOCK_MARKETS] };
 
+  const globalRegimeContext = await buildTrendRunnerGlobalRegimeContext({ market });
   const activeSignals = await TrendRunnerSignal.find(query).populate("asset");
   const results = [];
 
@@ -423,7 +468,7 @@ export async function refreshActiveOpenSignals({ market = "all" } = {}) {
       continue;
     }
 
-    const result = await scanOneAssetForOpenSignal(signal.asset);
+    const result = await scanOneAssetForOpenSignal(signal.asset, { globalRegimeContext });
     results.push({ signalId: signal._id, ...result });
   }
 

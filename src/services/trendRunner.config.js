@@ -3,6 +3,7 @@ export const TREND_RUNNER_PARAMS = {
   slippageBps: 5,
   minEntryHoldScore: 70,
   minReentryHoldScore: 90,
+  globalBearMinHoldScore: 90,
   emaFastLen: 20,
   emaSlowLen: 50,
   emaTrendLen: 200,

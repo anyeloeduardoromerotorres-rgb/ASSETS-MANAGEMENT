@@ -16,6 +16,7 @@ import {
   saveTrendRunnerPushToken,
   sendTrendRunnerPush,
 } from "../services/trendRunnerNotification.service.js";
+import { buildTrendRunnerSignalQualityFromSignal } from "../services/trendRunnerSignalQuality.service.js";
 import {
   getTrendRunnerScanJobs,
   startTrendRunnerScanJob,
@@ -140,7 +141,29 @@ export async function getSignals(req, res) {
     const signals = await TrendRunnerSignal.find(query)
       .populate("asset")
       .populate("position")
-      .sort({ detectedAt: -1 });
+      .sort({ side: 1, "quality.score": -1, detectedAt: -1 });
+
+    for (const signal of signals) {
+      if (
+        signal.side === "open"
+        && signal.status === "active"
+        && !Number.isFinite(Number(signal.quality?.score))
+      ) {
+        const quality = buildTrendRunnerSignalQualityFromSignal(signal);
+        if (quality) {
+          signal.quality = quality;
+          await signal.save();
+        }
+      }
+    }
+
+    signals.sort((left, right) => {
+      if (left.side !== right.side) return left.side === "close" ? -1 : 1;
+      if (left.side === "open") {
+        return Number(right.quality?.score ?? -1) - Number(left.quality?.score ?? -1);
+      }
+      return new Date(right.detectedAt).getTime() - new Date(left.detectedAt).getTime();
+    });
 
     res.json(signals);
   } catch (error) {

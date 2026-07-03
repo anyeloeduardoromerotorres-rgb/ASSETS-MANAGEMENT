@@ -72,6 +72,20 @@ const notificationSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const signalQualitySchema = new mongoose.Schema(
+  {
+    score: Number,
+    grade: String,
+    holdScoreComponent: Number,
+    signalTypeScore: Number,
+    riskScore: Number,
+    capitalScore: Number,
+    stopDistancePct: Number,
+    capitalRatio: Number,
+  },
+  { _id: false }
+);
+
 const trendRunnerSignalSchema = new mongoose.Schema(
   {
     asset: {
@@ -140,6 +154,7 @@ const trendRunnerSignalSchema = new mongoose.Schema(
     hold: holdSnapshotSchema,
     parameters: parametersSchema,
     suggested: suggestedExecutionSchema,
+    quality: signalQualitySchema,
     omissionReason: {
       type: String,
     },
@@ -152,6 +167,7 @@ const trendRunnerSignalSchema = new mongoose.Schema(
 );
 
 trendRunnerSignalSchema.index({ side: 1, status: 1, symbol: 1 });
+trendRunnerSignalSchema.index({ side: 1, status: 1, "quality.score": -1 });
 trendRunnerSignalSchema.index({ symbol: 1, side: 1, signalDateKey: 1, signalType: 1 });
 
 const TrendRunnerSignal = mongoose.model(
