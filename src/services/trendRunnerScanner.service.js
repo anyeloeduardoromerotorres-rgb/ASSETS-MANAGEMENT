@@ -11,6 +11,7 @@ import {
   buildEntryParameters,
   historyConfig,
   isoDate,
+  signalAt,
 } from "./trendRunnerIndicators.service.js";
 import {
   fetchDailyBarsForAsset,
@@ -56,6 +57,47 @@ function holdSnapshot(hold) {
     trendR2: hold.trendR2,
     trendQualityScore: hold.trendQualityScore,
   };
+}
+
+function analysisAtIndex(analysis, bars, index) {
+  const hold = analysis.indicators?.hold?.[index];
+  const signalType = hold?.score >= P.minEntryHoldScore
+    ? signalAt(index, bars, analysis.indicators, hold.score)
+    : null;
+
+  return {
+    ...analysis,
+    index,
+    latestBar: bars[index],
+    hold,
+    signalType,
+    atr: analysis.indicators?.atr?.[index],
+  };
+}
+
+function findCurrentOpenSignalTriggerAnalysis(analysis, bars) {
+  if (
+    !analysis?.signalType
+    || !analysis?.indicators
+    || !Array.isArray(bars)
+    || !Number.isInteger(analysis.index)
+  ) {
+    return analysis;
+  }
+
+  let triggerIndex = analysis.index;
+
+  for (let index = analysis.index - 1; index >= 0; index -= 1) {
+    const hold = analysis.indicators.hold?.[index];
+    if (!hold || hold.score < P.minEntryHoldScore) break;
+
+    const signalType = signalAt(index, bars, analysis.indicators, hold.score);
+    if (!signalType) break;
+
+    triggerIndex = index;
+  }
+
+  return analysisAtIndex(analysis, bars, triggerIndex);
 }
 
 function normalizeFeeParts(fees, fallbackAmount, fallbackCurrency = "USD") {
@@ -261,7 +303,7 @@ async function upsertOmittedOpenSignal(asset, analysis, capital, price) {
   return signal;
 }
 
-async function upsertActiveOpenSignal(asset, analysis, capital, price) {
+async function upsertActiveOpenSignal(asset, analysis, capital, price, latestAnalysis = analysis) {
   const params = buildEntryParameters({
     entryPrice: price,
     atr: analysis.atr,
@@ -282,9 +324,8 @@ async function upsertActiveOpenSignal(asset, analysis, capital, price) {
     status: "active",
   });
 
-  const existingTriggerBar = signal?.raw?.triggerBar;
-  const triggerBar = existingTriggerBar ?? analysis.latestBar;
-  const triggerDateKey = signal?.signalDateKey ?? signalDateKey;
+  const triggerBar = analysis.latestBar;
+  const triggerDateKey = triggerBar?.date ?? signalDateKey;
 
   const payload = {
     asset: asset._id,
@@ -317,9 +358,9 @@ async function upsertActiveOpenSignal(asset, analysis, capital, price) {
     omissionReason: null,
     raw: {
       triggerBar,
-      latestBar: analysis.latestBar,
-      requiredBars: analysis.requiredBars,
-      barsCount: analysis.barsCount,
+      latestBar: latestAnalysis.latestBar,
+      requiredBars: latestAnalysis.requiredBars,
+      barsCount: latestAnalysis.barsCount,
     },
   };
 
@@ -394,11 +435,12 @@ export async function scanOneAssetForOpenSignal(asset, { globalRegimeContext = n
       };
     }
 
-    const price = adversePrice(analysis.latestBar.close, "buy");
+    const triggerAnalysis = findCurrentOpenSignalTriggerAnalysis(analysis, bars);
+    const price = adversePrice(triggerAnalysis.latestBar.close, "buy");
     const capital = await resolveCapitalForSignal(asset, price);
 
     if (!capital.canOpen) {
-      const signal = await upsertOmittedOpenSignal(asset, analysis, capital, price);
+      const signal = await upsertOmittedOpenSignal(asset, triggerAnalysis, capital, price);
       return {
         symbol: asset.symbol,
         status: "omitted",
@@ -406,7 +448,13 @@ export async function scanOneAssetForOpenSignal(asset, { globalRegimeContext = n
       };
     }
 
-    const signal = await upsertActiveOpenSignal(asset, analysis, capital, price);
+    const signal = await upsertActiveOpenSignal(
+      asset,
+      triggerAnalysis,
+      capital,
+      price,
+      analysis
+    );
     return {
       symbol: asset.symbol,
       status: "active",
