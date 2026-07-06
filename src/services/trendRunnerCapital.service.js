@@ -5,11 +5,14 @@ import { TREND_RUNNER_PORTFOLIO } from "./trendRunner.config.js";
 import { fetchYahooLatestPrice } from "./trendRunnerMarketData.service.js";
 
 const STOCK_MARKETS = new Set(["stock", "etf", "adr"]);
+const INDIVIDUAL_STOCK_MARKETS = new Set(["stock", "adr"]);
 
 const toFinite = (value, fallback = 0) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 };
+
+const isIndividualStockMarket = (market) => INDIVIDUAL_STOCK_MARKETS.has(market);
 
 async function getConfigTotal(names, fallback = 0) {
   const docs = await ConfigInfo.find({ name: { $in: names } });
@@ -167,6 +170,24 @@ export async function resolveCapitalForSignal(asset, price) {
       canOpen: false,
       capitalSource: "INSUFFICIENT",
       fiatCurrency: "USD",
+    };
+  }
+
+  const individualStockMinSignalUsd = toFinite(
+    TREND_RUNNER_PORTFOLIO.individualStockMinSignalUsd
+  );
+  if (
+    isIndividualStockMarket(asset.market)
+    && individualStockMinSignalUsd > 0
+    && target.targetCapitalUsd < individualStockMinSignalUsd
+  ) {
+    return {
+      ...context,
+      ...target,
+      canOpen: false,
+      capitalSource: "INSUFFICIENT",
+      fiatCurrency: "USD",
+      omissionReason: "individual_stock_min_signal_usd",
     };
   }
 

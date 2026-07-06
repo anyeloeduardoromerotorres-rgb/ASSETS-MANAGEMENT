@@ -38,8 +38,19 @@ const CRISIS_PERIODS = [
   { name: "Subida tasas 2022 completo", startDate: "2022-01-03", endDate: "2022-12-30" },
 ];
 
+const INDIVIDUAL_STOCK_MARKETS = new Set(["stock", "adr"]);
+
 function round(value, decimals = 6) {
   return Number.isFinite(value) ? Number(value.toFixed(decimals)) : null;
+}
+
+function isIndividualStockMarket(market) {
+  return INDIVIDUAL_STOCK_MARKETS.has(market);
+}
+
+function individualStockMinSignalUsd() {
+  const value = Number(TREND_RUNNER_PORTFOLIO.individualStockMinSignalUsd);
+  return Number.isFinite(value) ? value : 0;
 }
 
 function isoDate(value) {
@@ -574,6 +585,32 @@ function executeFinalPortfolio(candidates, {
       ? desiredAllocation
       : Math.min(desiredAllocation, cashBox.cash);
     const isPartialPosition = allocation + EPSILON < desiredAllocation;
+    const minIndividualStockValue = individualStockMinSignalUsd();
+    if (
+      isIndividualStockMarket(state.asset.market)
+      && minIndividualStockValue > 0
+      && allocation + EPSILON < minIndividualStockValue
+    ) {
+      skipped.push({
+        strategy,
+        symbol: state.asset.symbol,
+        signalDate: pending.signalDate,
+        intendedEntryDate: date,
+        signalType: pending.signalType,
+        holdScore: pending.hold.score,
+        reason: "individual_stock_min_signal_usd",
+        cashAvailable: cashBox.cash,
+        requiredCash: minIndividualStockValue,
+        capitalUsd: allocation,
+        desiredCapitalUsd: desiredAllocation,
+      });
+      pending.signalRow.status = "omitted";
+      pending.signalRow.statusReason = "individual_stock_min_signal_usd";
+      pending.signalRow.capitalUsd = allocation;
+      pending.signalRow.desiredCapitalUsd = desiredAllocation;
+      pending.signalRow.isPartialPosition = isPartialPosition;
+      return false;
+    }
     const entryPrice = adversePrice(bar.open, "buy");
     const quantity = allocation / (entryPrice * (1 + P.commissionRate));
     const gross = quantity * entryPrice;
@@ -1483,6 +1520,7 @@ async function main() {
     { key: "backtestEndDate", value: SETTINGS.backtestEndDate },
     { key: "final.positionPct", value: TREND_RUNNER_PORTFOLIO.positionPct },
     { key: "final.minPositionUsd", value: TREND_RUNNER_PORTFOLIO.minPositionUsd },
+    { key: "final.individualStockMinSignalUsd", value: TREND_RUNNER_PORTFOLIO.individualStockMinSignalUsd },
     { key: "final.minEntryHoldScore", value: P.minEntryHoldScore },
     { key: "final.minReentryHoldScore", value: P.minReentryHoldScore },
     { key: "final.globalRegimeFilter", value: "equity uses SPY/QQQ; crypto uses BTCUSDT; daily EMA200 or completed weekly EMA200 below = bear" },
