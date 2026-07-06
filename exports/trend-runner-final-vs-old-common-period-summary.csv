@@ -1,4 +1,4 @@
 strategy,startDate,endDate,years,normalizedInitialCash,normalizedFinalEquity,totalReturnPct,cagrPct,maxDrawdownPct,maxDrawdownDate,maxOpenPositions,avgOpenPositions,avgDeployedPct
-final_trend_runner_common_period,2023-09-22,2026-07-01,2.77,1100,2014.55,83.14,24.38,-16.9,2025-04-16,38,32.55,90.04
-old_slope_costed_common_period,2023-09-22,2026-07-01,2.77,1100,1628.68,48.06,15.2,-25.4,2026-06-25,44,22.93,36.93
-old_slope_original_no_costs_common_period,2023-09-22,2026-07-01,2.77,1100,1632.52,48.41,15.3,-25.37,2026-06-25,44,22.93,36.93
+final_trend_runner_common_period,2023-09-22,2026-07-02,2.78,1100,1466.52,33.32,10.91,-13.34,2025-05-23,43,34.32,86.14
+old_slope_costed_common_period,2023-09-22,2026-07-02,2.78,1100,1427.24,29.75,9.84,-16.6,2026-06-25,12,8.85,19.93
+old_slope_original_no_costs_common_period,2023-09-22,2026-07-02,2.78,1100,1427.35,29.76,9.84,-16.69,2026-06-25,12,8.85,20.05

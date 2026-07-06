@@ -1,8 +1,9 @@
 key,value
 initialCash,1100
-backtestEndDate,2026-07-01
+backtestEndDate,2026-07-05
 final.positionPct,2.75
 final.minPositionUsd,20
+final.individualStockMinSignalUsd,1000
 final.minEntryHoldScore,70
 final.minReentryHoldScore,90
 final.globalRegimeFilter,equity uses SPY/QQQ; crypto uses BTCUSDT; daily EMA200 or completed weekly EMA200 below = bear

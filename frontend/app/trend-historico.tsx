@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -90,6 +90,45 @@ const formatDate = (value?: string) => {
   return date.toLocaleString();
 };
 
+const normalizeSymbol = (symbol?: string) => symbol?.trim().toUpperCase() ?? "";
+
+const isCryptoPosition = (position: TrendPosition) => position.market === "crypto";
+
+const getBinanceSymbol = (position: TrendPosition) => {
+  const symbol = normalizeSymbol(position.symbol);
+  if (!symbol) return "";
+  return symbol.endsWith("USDT") ? symbol : `${symbol}USDT`;
+};
+
+const extractYahooPrice = (data: any) => {
+  const result = data?.chart?.result?.[0];
+  const meta = result?.meta;
+  const candidates = [
+    meta?.regularMarketPrice,
+    meta?.postMarketPrice,
+    meta?.preMarketPrice,
+    meta?.previousClose,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) {
+      return candidate;
+    }
+  }
+
+  const closes = result?.indicators?.quote?.[0]?.close;
+  if (Array.isArray(closes)) {
+    for (let index = closes.length - 1; index >= 0; index -= 1) {
+      const close = closes[index];
+      if (typeof close === "number" && Number.isFinite(close) && close > 0) {
+        return close;
+      }
+    }
+  }
+
+  return null;
+};
+
 function defaultCloseForm(position: TrendPosition): CloseForm {
   const price = position.closePrice ?? position.openPrice;
   const value = price * position.amount;
@@ -131,6 +170,9 @@ export default function TrendRunnerHistoryScreen() {
   const [closeForm, setCloseForm] = useState<CloseForm | null>(null);
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [stockPrices, setStockPrices] = useState<Record<string, number>>({});
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+  const priceSocketRef = useRef<WebSocket | null>(null);
 
   const loadPositions = useCallback(async ({ silent = false } = {}) => {
     try {
@@ -155,6 +197,194 @@ export default function TrendRunnerHistoryScreen() {
       loadPositions({ silent: true });
     }, [loadPositions])
   );
+
+  const openStockSymbols = useMemo(() => {
+    return Array.from(
+      new Set(
+        positions
+          .filter((position) => position.status === "open" && !isCryptoPosition(position))
+          .map((position) => normalizeSymbol(position.symbol))
+          .filter(Boolean)
+      )
+    );
+  }, [positions]);
+
+  const openCryptoSymbols = useMemo(() => {
+    return Array.from(
+      new Set(
+        positions
+          .filter((position) => position.status === "open" && isCryptoPosition(position))
+          .map(getBinanceSymbol)
+          .filter(Boolean)
+      )
+    );
+  }, [positions]);
+
+  const fetchYahooPrice = useCallback(async (symbol: string) => {
+    try {
+      const res = await fetch(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d`
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      return extractYahooPrice(data);
+    } catch (error) {
+      console.error(`Error obteniendo precio Yahoo de ${symbol}`, error);
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!openStockSymbols.length) {
+      setStockPrices({});
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchAll = async () => {
+      const entries = await Promise.all(
+        openStockSymbols.map(async (symbol) => {
+          const price = await fetchYahooPrice(symbol);
+          return price ? { symbol, price } : null;
+        })
+      );
+
+      if (cancelled) return;
+
+      const snapshot: Record<string, number> = {};
+      entries.forEach((entry) => {
+        if (entry) snapshot[entry.symbol] = entry.price;
+      });
+
+      if (Object.keys(snapshot).length) {
+        setStockPrices((prev) => ({ ...prev, ...snapshot }));
+      }
+    };
+
+    fetchAll();
+    const interval = setInterval(fetchAll, 60_000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [openStockSymbols, fetchYahooPrice]);
+
+  useEffect(() => {
+    if (priceSocketRef.current) {
+      priceSocketRef.current.close();
+      priceSocketRef.current = null;
+    }
+
+    if (!openCryptoSymbols.length) {
+      setLivePrices({});
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchInitialPrices = async () => {
+      try {
+        const entries = await Promise.all(
+          openCryptoSymbols.map(async (symbol) => {
+            try {
+              const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`);
+              if (!res.ok) return null;
+              const data = await res.json();
+              const price = Number(data?.price);
+              if (!Number.isFinite(price) || price <= 0) return null;
+              return { symbol, price };
+            } catch {
+              return null;
+            }
+          })
+        );
+
+        if (cancelled) return;
+
+        const snapshot: Record<string, number> = {};
+        entries.forEach((entry) => {
+          if (entry) snapshot[entry.symbol] = entry.price;
+        });
+
+        if (Object.keys(snapshot).length) {
+          setLivePrices((prev) => ({ ...prev, ...snapshot }));
+        }
+      } catch (error) {
+        console.error("Error obteniendo precios iniciales de Binance", error);
+      }
+    };
+
+    fetchInitialPrices();
+
+    const streams = openCryptoSymbols.map((symbol) => `${symbol.toLowerCase()}@miniTicker`).join("/");
+    const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+    priceSocketRef.current = ws;
+
+    ws.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        const data = payload?.data ?? payload;
+        const symbol = normalizeSymbol(data?.s);
+        const price = Number(data?.c);
+        if (!symbol || !Number.isFinite(price) || price <= 0) return;
+        setLivePrices((prev) => ({ ...prev, [symbol]: price }));
+      } catch (error) {
+        console.error("Error procesando precio miniTicker de Binance", error);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error("Error en WebSocket de precios Binance", error);
+    };
+
+    ws.onclose = () => {
+      if (priceSocketRef.current === ws) {
+        priceSocketRef.current = null;
+      }
+    };
+
+    return () => {
+      cancelled = true;
+      if (priceSocketRef.current === ws) {
+        priceSocketRef.current = null;
+      }
+      ws.close();
+    };
+  }, [openCryptoSymbols]);
+
+  useEffect(() => () => {
+    if (priceSocketRef.current) {
+      priceSocketRef.current.close();
+      priceSocketRef.current = null;
+    }
+  }, []);
+
+  const getCurrentPrice = useCallback((position: TrendPosition) => {
+    if (isCryptoPosition(position)) {
+      return livePrices[getBinanceSymbol(position)] ?? null;
+    }
+    return stockPrices[normalizeSymbol(position.symbol)] ?? null;
+  }, [livePrices, stockPrices]);
+
+  const getUnrealizedInfo = useCallback((position: TrendPosition) => {
+    const price = getCurrentPrice(position);
+    if (!Number.isFinite(price)) return null;
+
+    const currentPrice = price as number;
+    const currentValue = currentPrice * (position.amount || 0);
+    const openCost = (position.openValueFiat || 0) + (position.openFee ?? 0);
+    const profitFiat = currentValue - openCost;
+    const profitPercent = openCost > 0 ? (profitFiat / openCost) * 100 : 0;
+
+    return {
+      price: currentPrice,
+      currentValue,
+      profitFiat,
+      profitPercent,
+    };
+  }, [getCurrentPrice]);
 
   const filtered = useMemo(() => {
     return positions.filter((position) => filter === "all" || position.status === filter);
@@ -331,13 +561,23 @@ export default function TrendRunnerHistoryScreen() {
               <Text style={styles.rowText}>Apertura: {formatDate(position.openDate)}</Text>
               <Text style={styles.rowText}>Precio: {fmt(position.openPrice, 6)} · Cantidad: {fmt(position.amount, 8)}</Text>
               <Text style={styles.rowText}>Valor apertura: {position.fiatCurrency} {fmt(position.openValueFiat)}</Text>
+              {position.status === "open" ? (() => {
+                const unrealized = getUnrealizedInfo(position);
+                const hasUnrealized = !!unrealized;
+
+                return (
+                  <View style={styles.liveBox}>
+                    <Text style={styles.rowText}>Precio actual: {hasUnrealized ? fmt(unrealized.price, 6) : "-"}</Text>
+                    <Text style={styles.rowText}>Valor actual: {position.fiatCurrency} {hasUnrealized ? fmt(unrealized.currentValue) : "-"}</Text>
+                    <Text style={[styles.rowText, hasUnrealized && unrealized.profitFiat >= 0 ? styles.profit : hasUnrealized ? styles.loss : undefined]}>
+                      PnL actual: {position.fiatCurrency} {hasUnrealized ? fmt(unrealized.profitFiat) : "-"} · {hasUnrealized ? fmt(unrealized.profitPercent) : "-"}%
+                    </Text>
+                  </View>
+                );
+              })() : null}
               <Text style={styles.rowText}>Senal: {position.strategy?.signalType ?? "-"} · Hold {fmt(position.strategy?.hold?.score, 1)}</Text>
               <Text style={styles.rowText}>Stop: {fmt(position.strategy?.initialStop, 6)} · TP1: {fmt(position.strategy?.tp1Price, 6)} · Runner: {fmt(position.strategy?.runnerStop, 6)}</Text>
               <Text style={styles.rowText}>TP1 qty: {fmt(position.strategy?.qtyTp1, 8)} · Runner qty: {fmt(position.strategy?.qtyRunner, 8)}</Text>
-              {position.requiresShvSale ? (
-                <Text style={styles.warning}>Esta posicion requirio vender SHV.</Text>
-              ) : null}
-
               {position.status === "closed" ? (
                 <>
                   <Text style={styles.rowText}>Cierre: {formatDate(position.closeDate)}</Text>
@@ -460,8 +700,8 @@ const styles = StyleSheet.create({
   status: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, fontWeight: "800", overflow: "hidden" },
   open: { backgroundColor: "#fff3e0", color: "#ef6c00" },
   closed: { backgroundColor: "#e8f5e9", color: "#1b5e20" },
+  liveBox: { borderRadius: 10, backgroundColor: "#eef7ff", padding: 10, gap: 4, marginVertical: 2 },
   rowText: { fontSize: 14, color: "#263238" },
-  warning: { fontSize: 13, color: "#bf360c", fontWeight: "700" },
   profit: { color: "#1b5e20" },
   loss: { color: "#b71c1c" },
   actions: { flexDirection: "row", gap: 8, marginTop: 8 },

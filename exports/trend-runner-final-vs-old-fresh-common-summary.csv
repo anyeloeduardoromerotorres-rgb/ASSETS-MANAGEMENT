@@ -1,4 +1,4 @@
-strategy,startDate,endDate,years,initialCash,finalEquity,netProfit,totalReturnPct,cagrPct,maxDrawdownPct,maxDrawdownDate,trades,buys,sells,winRatePct,profitFactor,averageTradePct,medianTradePct,averageDaysHeld,maxOpenPositions,avgOpenPositions,avgDeployedPct,feesPaid,signalsDetected,skippedEntries
-final_trend_runner_fresh_common_period,2023-09-22,2026-07-01,2.77,1100,1943.44,843.44,76.68,22.78,-16.64,2025-04-16,407,407,769,35.87,2.937,5.95,-3.02,81.1,40,32.62,88.91,15.62,3672,3265
-old_slope_costed,2023-09-22,2026-07-01,2.77,1100,1628.18,528.18,48.02,15.19,-25.4,2026-06-25,271,156,115,,,,,,44,22.93,36.93,2.07,,
-old_slope_original_no_costs,2023-09-22,2026-07-01,2.77,1100,1632.52,532.52,48.41,15.3,-25.37,2026-06-25,271,156,115,,,,,,44,22.93,36.93,0,,
+strategy,startDate,endDate,years,initialCash,finalEquity,netProfit,totalReturnPct,cagrPct,firstTradeDate,inactiveYearsBeforeFirstTrade,activeYears,activeTotalReturnPct,activeCagrPct,maxDrawdownPct,maxDrawdownDate,trades,buys,sells,winRatePct,profitFactor,averageTradePct,medianTradePct,averageDaysHeld,maxOpenPositions,avgOpenPositions,avgDeployedPct,activeAvgOpenPositions,activeAvgDeployedPct,feesPaid,signalsDetected,skippedEntries
+final_trend_runner_fresh_common_period,2023-09-22,2026-07-02,2.78,1100,1476.33,376.33,34.21,11.18,2023-10-09,0.05,2.73,33.84,11.27,-13.29,2025-05-23,376,376,704,43.88,2.55,3.07,-2.04,90.9,43,33.75,85.68,34.16,86.73,12.96,14241,13865
+old_slope_costed,2023-09-22,2026-07-02,2.78,1100,1426.94,326.94,29.72,9.83,2023-09-22,0,2.78,29.75,9.84,-16.6,2026-06-25,109,56,53,,,,,,12,8.85,19.93,8.85,19.93,0.86,,
+old_slope_original_no_costs,2023-09-22,2026-07-02,2.78,1100,1427.35,327.35,29.76,9.84,2023-09-22,0,2.78,29.76,9.84,-16.69,2026-06-25,110,57,53,,,,,,12,8.85,20.05,8.85,20.05,0,,

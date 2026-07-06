@@ -135,6 +135,18 @@ const parseInput = (value: string) => {
   return Number.isFinite(parsed) ? parsed : NaN;
 };
 
+const formatInputNumber = (value: number, decimals = 8) => (
+  Number.isFinite(value) ? String(Number(value.toFixed(decimals))) : ""
+);
+
+const calculateValueFiatInput = (priceText: string, amountText: string) => {
+  const price = parseInput(priceText);
+  const amount = parseInput(amountText);
+
+  if (price <= 0 || amount <= 0) return "";
+  return formatInputNumber(price * amount);
+};
+
 const calculateTp1Quantity = (signal: TrendSignal) => {
   const quantity = signal.suggested?.quantity;
   const tp1Pct = signal.parameters?.tp1QtyPct;
@@ -668,9 +680,35 @@ export default function TrendRunnerSignalsScreen() {
                   <Text style={styles.label}>Fecha apertura</Text>
                   <TextInput style={styles.input} value={openForm.openDate} onChangeText={(value) => setOpenForm({ ...openForm, openDate: value })} />
                   <Text style={styles.label}>Precio real</Text>
-                  <TextInput style={styles.input} value={openForm.openPrice} onChangeText={(value) => setOpenForm({ ...openForm, openPrice: value })} keyboardType="numeric" />
+                  <TextInput
+                    style={styles.input}
+                    value={openForm.openPrice}
+                    onChangeText={(value) => setOpenForm((current) => (
+                      current
+                        ? {
+                          ...current,
+                          openPrice: value,
+                          openValueFiat: calculateValueFiatInput(value, current.amount),
+                        }
+                        : current
+                    ))}
+                    keyboardType="numeric"
+                  />
                   <Text style={styles.label}>Cantidad real</Text>
-                  <TextInput style={styles.input} value={openForm.amount} onChangeText={(value) => setOpenForm({ ...openForm, amount: value })} keyboardType="numeric" />
+                  <TextInput
+                    style={styles.input}
+                    value={openForm.amount}
+                    onChangeText={(value) => setOpenForm((current) => (
+                      current
+                        ? {
+                          ...current,
+                          amount: value,
+                          openValueFiat: calculateValueFiatInput(current.openPrice, value),
+                        }
+                        : current
+                    ))}
+                    keyboardType="numeric"
+                  />
                   <Text style={styles.label}>Valor total</Text>
                   <TextInput style={styles.input} value={openForm.openValueFiat} onChangeText={(value) => setOpenForm({ ...openForm, openValueFiat: value })} keyboardType="numeric" />
                   <Text style={styles.label}>Fee</Text>
