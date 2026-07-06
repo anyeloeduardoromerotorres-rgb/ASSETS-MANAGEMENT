@@ -538,20 +538,28 @@ function determineExitFromPosition(position, analysis, latestPrice) {
   const tp1Price = toFinite(strategy.tp1Price);
   const runnerStop = toFinite(strategy.runnerStop);
 
-  if (qtyTp1 > EPSILON && initialStop > 0 && currentPrice <= initialStop) {
-    return {
-      signalType: "Stop inicial",
-      reason: "initial_stop",
-      quantity: qtyTp1,
-      price: currentPrice,
-    };
-  }
+  const tp1StopHit = qtyTp1 > EPSILON && initialStop > 0 && currentPrice <= initialStop;
+  const runnerStopHit = qtyRunner > EPSILON && runnerStop > 0 && currentPrice <= runnerStop;
 
-  if (qtyRunner > EPSILON && runnerStop > 0 && currentPrice <= runnerStop) {
+  if (tp1StopHit || runnerStopHit) {
+    const quantity = round8(
+      (tp1StopHit ? qtyTp1 : 0) + (runnerStopHit ? qtyRunner : 0)
+    );
+    const signalType = tp1StopHit && runnerStopHit
+      ? "Stop loss"
+      : tp1StopHit
+        ? "Stop inicial"
+        : "Trailing/stop runner";
+    const reason = tp1StopHit && runnerStopHit
+      ? "stop_loss"
+      : tp1StopHit
+        ? "initial_stop"
+        : "runner_trailing_stop";
+
     return {
-      signalType: "Trailing/stop runner",
-      reason: "runner_trailing_stop",
-      quantity: qtyRunner,
+      signalType,
+      reason,
+      quantity,
       price: currentPrice,
     };
   }

@@ -75,8 +75,21 @@ type EditForm = {
   notes: string;
 };
 
+type PositionAction = {
+  title: string;
+  detail: string;
+  tone: "wait" | "profit" | "stop";
+};
+
+const EPSILON = 1e-8;
+
 const fmt = (value?: number, decimals = 2) =>
   Number.isFinite(value) ? Number(value).toFixed(decimals) : "-";
+
+const toFiniteNumber = (value: unknown, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
 
 const parseInput = (value: string) => {
   const parsed = Number(value.replace(/,/g, "."));
@@ -386,6 +399,66 @@ export default function TrendRunnerHistoryScreen() {
     };
   }, [getCurrentPrice]);
 
+  const getPositionAction = useCallback((position: TrendPosition): PositionAction => {
+    const price = getCurrentPrice(position);
+    if (!Number.isFinite(price)) {
+      return {
+        title: "Esperar",
+        detail: "No hay precio actual disponible para evaluar TP1 o stop.",
+        tone: "wait",
+      };
+    }
+
+    const currentPrice = price as number;
+    const strategy = position.strategy ?? {};
+    const amount = Math.max(0, toFiniteNumber(position.amount));
+    const qtyTp1 = Math.min(toFiniteNumber(strategy.qtyTp1), amount);
+    const qtyRunner = Math.min(toFiniteNumber(strategy.qtyRunner), amount);
+    const initialStop = toFiniteNumber(strategy.initialStop);
+    const runnerStop = toFiniteNumber(strategy.runnerStop);
+    const tp1Price = toFiniteNumber(strategy.tp1Price);
+    const tp1StopHit = qtyTp1 > EPSILON && initialStop > 0 && currentPrice <= initialStop;
+    const runnerStopHit = qtyRunner > EPSILON && runnerStop > 0 && currentPrice <= runnerStop;
+
+    if (tp1StopHit || runnerStopHit) {
+      const quantity = (tp1StopHit ? qtyTp1 : 0) + (runnerStopHit ? qtyRunner : 0);
+      const stopLabel = tp1StopHit && runnerStopHit
+        ? "Stop loss alcanzado"
+        : runnerStopHit
+          ? "Trailing stop alcanzado"
+          : "Stop inicial alcanzado";
+      const stopPrice = runnerStopHit ? runnerStop : initialStop;
+
+      return {
+        title: stopLabel,
+        detail: `Vender ${fmt(quantity, 8)}. Precio actual ${fmt(currentPrice, 6)} <= stop ${fmt(stopPrice, 6)}.`,
+        tone: "stop",
+      };
+    }
+
+    if (!strategy.tp1Reached && qtyTp1 > EPSILON && tp1Price > 0 && currentPrice >= tp1Price) {
+      return {
+        title: "Precio sobre TP1",
+        detail: `Vender ${fmt(qtyTp1, 8)}. Precio actual ${fmt(currentPrice, 6)} >= TP1 ${fmt(tp1Price, 6)}.`,
+        tone: "profit",
+      };
+    }
+
+    if (strategy.tp1Reached) {
+      return {
+        title: "Esperar",
+        detail: `TP1 ya fue ejecutado. Mantener runner mientras el precio siga sobre ${fmt(runnerStop, 6)}.`,
+        tone: "wait",
+      };
+    }
+
+    return {
+      title: "Esperar",
+      detail: "No se alcanzó TP1, stop inicial ni trailing stop.",
+      tone: "wait",
+    };
+  }, [getCurrentPrice]);
+
   const filtered = useMemo(() => {
     return positions.filter((position) => filter === "all" || position.status === filter);
   }, [positions, filter]);
@@ -564,6 +637,7 @@ export default function TrendRunnerHistoryScreen() {
               {position.status === "open" ? (() => {
                 const unrealized = getUnrealizedInfo(position);
                 const hasUnrealized = !!unrealized;
+                const action = getPositionAction(position);
 
                 return (
                   <View style={styles.liveBox}>
@@ -572,6 +646,13 @@ export default function TrendRunnerHistoryScreen() {
                     <Text style={[styles.rowText, hasUnrealized && unrealized.profitFiat >= 0 ? styles.profit : hasUnrealized ? styles.loss : undefined]}>
                       PnL actual: {position.fiatCurrency} {hasUnrealized ? fmt(unrealized.profitFiat) : "-"} · {hasUnrealized ? fmt(unrealized.profitPercent) : "-"}%
                     </Text>
+                    <View style={[
+                      styles.positionActionBox,
+                      action.tone === "stop" ? styles.positionActionStop : action.tone === "profit" ? styles.positionActionProfit : styles.positionActionWait,
+                    ]}>
+                      <Text style={styles.positionActionTitle}>Acción sugerida: {action.title}</Text>
+                      <Text style={styles.positionActionDetail}>{action.detail}</Text>
+                    </View>
                   </View>
                 );
               })() : null}
@@ -701,6 +782,12 @@ const styles = StyleSheet.create({
   open: { backgroundColor: "#fff3e0", color: "#ef6c00" },
   closed: { backgroundColor: "#e8f5e9", color: "#1b5e20" },
   liveBox: { borderRadius: 10, backgroundColor: "#eef7ff", padding: 10, gap: 4, marginVertical: 2 },
+  positionActionBox: { borderRadius: 8, borderWidth: 1, padding: 8, marginTop: 6, gap: 2 },
+  positionActionWait: { backgroundColor: "#f5f7fa", borderColor: "#cfd8dc" },
+  positionActionProfit: { backgroundColor: "#e8f5e9", borderColor: "#66bb6a" },
+  positionActionStop: { backgroundColor: "#ffebee", borderColor: "#ef5350" },
+  positionActionTitle: { fontSize: 14, fontWeight: "800", color: "#263238" },
+  positionActionDetail: { fontSize: 13, color: "#37474f" },
   rowText: { fontSize: 14, color: "#263238" },
   profit: { color: "#1b5e20" },
   loss: { color: "#b71c1c" },
