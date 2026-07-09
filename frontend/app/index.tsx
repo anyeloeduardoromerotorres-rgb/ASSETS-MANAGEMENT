@@ -17,6 +17,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import api from "../constants/api";
 import { calculateTotalBalances } from "../utils/calculateTotalBalances";
 import TrendRunnerTemporaryBalances from "../components/TrendRunnerTemporaryBalances";
+import { useTrendRunnerOpenBalances } from "../utils/useTrendRunnerOpenBalances";
 
 interface ConfigDoc {
   _id: string;
@@ -184,6 +185,11 @@ export default function Index() {
   const [savingUsd, setSavingUsd] = useState(false);
   const [savingEtoro, setSavingEtoro] = useState(false);
   const [savingShv, setSavingShv] = useState(false);
+  const { balances: trendRunnerBalances } = useTrendRunnerOpenBalances();
+  const trendRunnerBalancesForTotal = useMemo(
+    () => trendRunnerBalances.filter((balance) => balance.market !== "crypto"),
+    [trendRunnerBalances]
+  );
 
   // Carga configuraciones financieras y lista de assets registrados.
   const fetchConfig = useCallback(
@@ -482,6 +488,7 @@ export default function Index() {
         usdtSellPrice,
         additionalBalances: [
           ...stockBalances,
+          ...trendRunnerBalancesForTotal,
           {
             id: shvConfig?._id ?? "totalSHV",
             asset: "SHV",
@@ -496,6 +503,7 @@ export default function Index() {
     [
       adjustedBinanceBalances,
       stockBalances,
+      trendRunnerBalancesForTotal,
       shvConfig?._id,
       parsedShv,
       stockPrices.SHV,
@@ -1425,6 +1433,7 @@ export default function Index() {
             <View style={styles.section}>
               <TrendRunnerTemporaryBalances
                 includeCrypto={false}
+                balances={trendRunnerBalances}
                 title="Trend Runner temporal en eToro"
               />
             </View>

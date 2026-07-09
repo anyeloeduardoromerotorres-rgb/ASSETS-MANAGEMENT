@@ -11,6 +11,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import api from "../constants/api";
 import { calculateTotalBalances } from "../utils/calculateTotalBalances";
 import TrendRunnerTemporaryBalances from "../components/TrendRunnerTemporaryBalances";
+import { useTrendRunnerOpenBalances } from "../utils/useTrendRunnerOpenBalances";
 
 type Balance = {
   asset: string;
@@ -51,6 +52,11 @@ export default function BalancesScreen() {
   const pricesRef = useRef<Record<string, number>>({}); // precio por asset (ej: BTC -> 63000)
   const [pricesTick, setPricesTick] = useState(0); // para forzar re-render al actualizar precios
   const priceWsRef = useRef<WebSocket | null>(null);
+  const { balances: trendRunnerBalances } = useTrendRunnerOpenBalances();
+  const trendRunnerBalancesForTotal = useMemo(
+    () => trendRunnerBalances.filter((balance) => balance.market !== "crypto"),
+    [trendRunnerBalances]
+  );
 
   const fetchBalances = async () => {
     try {
@@ -312,6 +318,7 @@ export default function BalancesScreen() {
         livePrices: pricesRef.current,
         additionalBalances: [
           ...stockBalances,
+          ...trendRunnerBalancesForTotal,
           {
             asset: "SHV",
             total: shvTotal,
@@ -322,7 +329,7 @@ export default function BalancesScreen() {
           },
         ],
       }),
-    [balances, stockBalances, totals, usdtSellPrice, pricesTick, shvTotal, stockPrices.SHV]
+    [balances, stockBalances, trendRunnerBalancesForTotal, totals, usdtSellPrice, pricesTick, shvTotal, stockPrices.SHV]
   );
 
   const visibleBalances = useMemo(
@@ -385,7 +392,7 @@ export default function BalancesScreen() {
               </View>
             );
           })}
-          <TrendRunnerTemporaryBalances />
+          <TrendRunnerTemporaryBalances balances={trendRunnerBalances} />
         </ScrollView>
       )}
     </View>

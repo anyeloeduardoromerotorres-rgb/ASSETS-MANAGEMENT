@@ -989,19 +989,51 @@ export async function updateTrendRunnerPosition(positionId, payload = {}) {
 }
 
 export async function getTrendRunnerOpenBalances() {
-  const positions = await TrendRunnerPosition.find({ status: "open" });
+  const positions = await TrendRunnerPosition.find({ status: "open" }).populate("asset");
   const grouped = new Map();
+  const priceCache = new Map();
 
   for (const position of positions) {
+    const symbol = position.symbol;
+    const amount = toFinite(position.amount);
+    const openValueFiat = toFinite(position.openValueFiat);
+    let currentPrice = priceCache.get(symbol);
+
+    if (currentPrice == null) {
+      try {
+        currentPrice = position.asset ? await fetchLatestPriceForAsset(position.asset) : null;
+      } catch {
+        currentPrice = null;
+      }
+
+      if (!Number.isFinite(Number(currentPrice)) || Number(currentPrice) <= 0) {
+        currentPrice = toFinite(position.openPrice, null);
+      }
+
+      priceCache.set(symbol, currentPrice);
+    }
+
+    const safeCurrentPrice = toFinite(currentPrice);
+    const currentUsdValue = amount > 0 && safeCurrentPrice > 0
+      ? amount * safeCurrentPrice
+      : openValueFiat;
+
     const current = grouped.get(position.symbol) ?? {
       asset: position.symbol,
       total: 0,
       usdValue: 0,
+      openValueFiat: 0,
+      unrealizedUsd: 0,
+      currentPrice: null,
       market: position.market,
       temporary: true,
     };
-    current.total += toFinite(position.amount);
-    current.usdValue += toFinite(position.openValueFiat);
+
+    current.total += amount;
+    current.usdValue += currentUsdValue;
+    current.openValueFiat += openValueFiat;
+    current.unrealizedUsd += currentUsdValue - openValueFiat;
+    current.currentPrice = current.total > 0 ? current.usdValue / current.total : null;
     grouped.set(position.symbol, current);
   }
 
@@ -1009,6 +1041,9 @@ export async function getTrendRunnerOpenBalances() {
     ...row,
     total: round8(row.total),
     usdValue: round8(row.usdValue),
+    openValueFiat: round8(row.openValueFiat),
+    unrealizedUsd: round8(row.unrealizedUsd),
+    currentPrice: row.currentPrice == null ? null : round8(row.currentPrice),
   }));
 }
 

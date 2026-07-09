@@ -65,11 +65,27 @@ export function calculateTotalBalances({
 
   const usdTotal = toFiniteNumber(totals.usd);
 
-  const extendedBalances = [
+  const rawExtendedBalances = [
     ...normalizedBalances,
     ...sanitizedAdditional,
     { asset: "USD", total: usdTotal, usdValue: usdTotal },
   ].filter((entry) => entry.usdValue > 0);
+
+  const groupedByAsset = new Map<string, BalanceEntry>();
+  for (const entry of rawExtendedBalances) {
+    const asset = entry.asset;
+    const current = groupedByAsset.get(asset);
+
+    if (!current) {
+      groupedByAsset.set(asset, { ...entry });
+      continue;
+    }
+
+    current.total += entry.total;
+    current.usdValue += entry.usdValue;
+  }
+
+  const extendedBalances = [...groupedByAsset.values()];
 
   const totalUsd = extendedBalances.reduce(
     (acc, entry) => acc + entry.usdValue,

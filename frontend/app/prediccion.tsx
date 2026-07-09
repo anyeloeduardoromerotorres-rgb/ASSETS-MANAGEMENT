@@ -7,6 +7,7 @@ import { CONFIG_INFO_INITIAL_ID } from "../constants/config";
 import { computeXIRR } from "../utils/xirrmanual"; // tu función XIRR
 import { calculateTotalBalances } from "../utils/calculateTotalBalances";
 import TrendRunnerTemporaryBalances from "../components/TrendRunnerTemporaryBalances";
+import { useTrendRunnerOpenBalances } from "../utils/useTrendRunnerOpenBalances";
 
 /** Representa un flujo de caja (depósito, retiro, inversión inicial, etc.) */
 type CashFlow = { amount: number; when: Date };
@@ -355,6 +356,11 @@ export default function PrediccionScreen() {
   const [capitalHistory, setCapitalHistory] = useState<CapitalSnapshot[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [selectedGainPeriod, setSelectedGainPeriod] = useState<PeriodKey>("1m");
+  const { balances: trendRunnerBalances } = useTrendRunnerOpenBalances();
+  const trendRunnerBalancesForTotal = useMemo(
+    () => trendRunnerBalances.filter((balance) => balance.market !== "crypto"),
+    [trendRunnerBalances]
+  );
 
   const fetchCapitalHistory = useCallback(async () => {
     try {
@@ -773,6 +779,7 @@ export default function PrediccionScreen() {
         livePrices,
         additionalBalances: [
           ...stockBalances,
+          ...trendRunnerBalancesForTotal,
           {
             asset: "SHV",
             total: shvTotal,
@@ -783,7 +790,7 @@ export default function PrediccionScreen() {
           },
         ],
       }),
-    [balances, stockBalances, totals, penPrice, usdtSellPrice, livePrices, shvTotal, stockPrices.SHV]
+    [balances, stockBalances, trendRunnerBalancesForTotal, totals, penPrice, usdtSellPrice, livePrices, shvTotal, stockPrices.SHV]
   );
 
   // Mantener totalUsd en sync con el cálculo de Balances
@@ -911,7 +918,7 @@ export default function PrediccionScreen() {
               : "No se pudo calcular"}
           </Text>
 
-          <TrendRunnerTemporaryBalances title="Trend Runner temporal" />
+          <TrendRunnerTemporaryBalances title="Trend Runner temporal" balances={trendRunnerBalances} />
 
           <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>Inicio de año</Text>
