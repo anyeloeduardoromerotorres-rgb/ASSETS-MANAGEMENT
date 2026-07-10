@@ -127,6 +127,12 @@ type CloseForm = {
   closeReason: string;
 };
 
+type SignalAction = {
+  title: string;
+  detail: string;
+  tone: "profit" | "stop" | "wait";
+};
+
 const fmt = (value?: number, decimals = 2) =>
   Number.isFinite(value) ? Number(value).toFixed(decimals) : "-";
 
@@ -154,6 +160,64 @@ const calculateTp1Quantity = (signal: TrendSignal) => {
   if (!Number.isFinite(quantity) || !Number.isFinite(tp1Pct)) return undefined;
   return Number(quantity) * (Number(tp1Pct) / 100);
 };
+
+const getCloseSignalAction = (signal: TrendSignal): SignalAction | null => {
+  if (signal.side !== "close") return null;
+
+  const reason = String(signal.reason ?? signal.signalType ?? "").toLowerCase();
+  const quantity = Number(signal.suggested?.quantity ?? 0);
+  const value = Number(signal.suggested?.valueFiat ?? 0);
+  const currency = signal.suggested?.fiatCurrency ?? (signal.market === "crypto" ? "USDT" : "USD");
+
+  if (reason === "tp1_below_min_close_value") {
+    return {
+      title: "TP1 alcanzado: no hacer nada",
+      detail: `La venta parcial seria ${currency} ${fmt(value)}. Es menor al minimo de eToro, mantener la posicion con trailing stop.`,
+      tone: "wait",
+    };
+  }
+
+  if (reason.includes("tp1") || signal.signalType === "TP1") {
+    return {
+      title: "Take profit 1 alcanzado",
+      detail: `Vender ${fmt(quantity, 8)} (${currency} ${fmt(value)}).`,
+      tone: "profit",
+    };
+  }
+
+  if (reason.includes("runner") || reason.includes("trailing")) {
+    return {
+      title: "Trailing stop alcanzado",
+      detail: `Vender todo lo restante (${fmt(quantity, 8)}).`,
+      tone: "stop",
+    };
+  }
+
+  if (reason.includes("stop")) {
+    return {
+      title: "Stop loss alcanzado",
+      detail: `Vender todo lo restante (${fmt(quantity, 8)}).`,
+      tone: "stop",
+    };
+  }
+
+  if (reason.includes("regimen") || reason.includes("regime")) {
+    return {
+      title: "Perdida de regimen",
+      detail: `Vender todo lo restante (${fmt(quantity, 8)}).`,
+      tone: "stop",
+    };
+  }
+
+  return {
+    title: "Cerrar posicion",
+    detail: `Vender ${fmt(quantity, 8)}.`,
+    tone: "stop",
+  };
+};
+
+const isNoActionCloseSignal = (signal?: TrendSignal | null) =>
+  signal?.side === "close" && signal.reason === "tp1_below_min_close_value";
 
 const assetNameFromSignal = (signal: TrendSignal) => {
   const symbol = signal.symbol?.trim().toUpperCase();
@@ -327,6 +391,9 @@ export default function TrendRunnerSignalsScreen() {
     setSelectedSignal(signal);
     if (signal.side === "open") {
       setOpenForm(defaultOpenForm(signal));
+      setCloseForm(null);
+    } else if (isNoActionCloseSignal(signal)) {
+      setOpenForm(null);
       setCloseForm(null);
     } else {
       setCloseForm(defaultCloseForm(signal));
@@ -642,6 +709,20 @@ export default function TrendRunnerSignalsScreen() {
                 </>
               ) : (
                 <>
+                  {(() => {
+                    const action = getCloseSignalAction(signal);
+                    if (!action) return null;
+
+                    return (
+                      <View style={[
+                        styles.signalActionBox,
+                        action.tone === "profit" ? styles.signalActionProfit : action.tone === "stop" ? styles.signalActionStop : styles.signalActionWait,
+                      ]}>
+                        <Text style={styles.signalActionTitle}>Accion sugerida: {action.title}</Text>
+                        <Text style={styles.signalActionDetail}>{action.detail}</Text>
+                      </View>
+                    );
+                  })()}
                   <Text style={styles.rowText}>Cantidad a cerrar: {fmt(signal.suggested?.quantity, 8)}</Text>
                   <Text style={styles.rowText}>Motivo: {signal.reason ?? signal.signalType}</Text>
                   <Text style={styles.rowText}>Runner stop: {fmt(signal.parameters?.runnerStop, 6)}</Text>
@@ -651,7 +732,7 @@ export default function TrendRunnerSignalsScreen() {
               <View style={styles.cardActions}>
                 <TouchableOpacity style={styles.executeButton} onPress={() => openExecutionModal(signal)}>
                   <Text style={styles.executeText}>
-                    {signal.side === "open" ? "Marcar abierta" : "Marcar cierre"}
+                    {signal.side === "open" ? "Marcar abierta" : isNoActionCloseSignal(signal) ? "Ver indicacion" : "Marcar cierre"}
                   </Text>
                 </TouchableOpacity>
                 {signal.side === "open" ? (
@@ -670,8 +751,27 @@ export default function TrendRunnerSignalsScreen() {
           <View style={styles.modalContent}>
             <ScrollView keyboardShouldPersistTaps="handled">
               <Text style={styles.modalTitle}>
-                {selectedSignal?.side === "open" ? "Registrar apertura" : "Registrar cierre"} {selectedSignal?.symbol}
+                {selectedSignal?.side === "open"
+                  ? "Registrar apertura"
+                  : isNoActionCloseSignal(selectedSignal)
+                    ? "Indicacion"
+                    : "Registrar cierre"} {selectedSignal?.symbol}
               </Text>
+
+              {isNoActionCloseSignal(selectedSignal) ? (() => {
+                const action = selectedSignal ? getCloseSignalAction(selectedSignal) : null;
+                if (!action) return null;
+
+                return (
+                  <View style={[
+                    styles.signalActionBox,
+                    styles.signalActionWait,
+                  ]}>
+                    <Text style={styles.signalActionTitle}>Accion sugerida: {action.title}</Text>
+                    <Text style={styles.signalActionDetail}>{action.detail}</Text>
+                  </View>
+                );
+              })() : null}
 
               {openForm ? (
                 <>
@@ -723,6 +823,20 @@ export default function TrendRunnerSignalsScreen() {
 
               {closeForm ? (
                 <>
+                  {selectedSignal ? (() => {
+                    const action = getCloseSignalAction(selectedSignal);
+                    if (!action) return null;
+
+                    return (
+                      <View style={[
+                        styles.signalActionBox,
+                        action.tone === "profit" ? styles.signalActionProfit : action.tone === "stop" ? styles.signalActionStop : styles.signalActionWait,
+                      ]}>
+                        <Text style={styles.signalActionTitle}>Accion sugerida: {action.title}</Text>
+                        <Text style={styles.signalActionDetail}>{action.detail}</Text>
+                      </View>
+                    );
+                  })() : null}
                   <Text style={styles.label}>Fecha cierre</Text>
                   <TextInput style={styles.input} value={closeForm.closeDate} onChangeText={(value) => setCloseForm({ ...closeForm, closeDate: value })} />
                   <Text style={styles.label}>Precio real cierre</Text>
@@ -786,6 +900,12 @@ const styles = StyleSheet.create({
   sideBadge: { maxWidth: "55%", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: "#e3f2fd", color: "#0d47a1", fontWeight: "700", textAlign: "right" },
   closeBadge: { backgroundColor: "#ffebee", color: "#b71c1c" },
   rowText: { fontSize: 14, color: "#263238" },
+  signalActionBox: { borderRadius: 8, borderWidth: 1, padding: 8, marginVertical: 4, gap: 2 },
+  signalActionProfit: { backgroundColor: "#e8f5e9", borderColor: "#66bb6a" },
+  signalActionStop: { backgroundColor: "#ffebee", borderColor: "#ef5350" },
+  signalActionWait: { backgroundColor: "#f5f7fa", borderColor: "#cfd8dc" },
+  signalActionTitle: { fontSize: 14, fontWeight: "800", color: "#263238" },
+  signalActionDetail: { fontSize: 13, color: "#37474f" },
   cardActions: { flexDirection: "row", gap: 8, marginTop: 8 },
   executeButton: { flex: 1, backgroundColor: "#2e7d32", borderRadius: 8, paddingVertical: 10, alignItems: "center" },
   ignoreButton: { width: 92, backgroundColor: "#78909c", borderRadius: 8, paddingVertical: 10, alignItems: "center" },

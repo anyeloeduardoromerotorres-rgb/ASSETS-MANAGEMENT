@@ -82,6 +82,7 @@ type PositionAction = {
 };
 
 const EPSILON = 1e-8;
+const ETORO_MIN_CLOSE_VALUE_USD = 10;
 
 const fmt = (value?: number, decimals = 2) =>
   Number.isFinite(value) ? Number(value).toFixed(decimals) : "-";
@@ -403,7 +404,7 @@ export default function TrendRunnerHistoryScreen() {
     const price = getCurrentPrice(position);
     if (!Number.isFinite(price)) {
       return {
-        title: "Esperar",
+        title: "No hacer nada",
         detail: "No hay precio actual disponible para evaluar TP1 o stop.",
         tone: "wait",
       };
@@ -419,6 +420,8 @@ export default function TrendRunnerHistoryScreen() {
     const tp1Price = toFiniteNumber(strategy.tp1Price);
     const tp1StopHit = qtyTp1 > EPSILON && initialStop > 0 && currentPrice <= initialStop;
     const runnerStopHit = qtyRunner > EPSILON && runnerStop > 0 && currentPrice <= runnerStop;
+    const tp1Value = qtyTp1 * currentPrice;
+    const minCloseValue = position.broker === "etoro" ? ETORO_MIN_CLOSE_VALUE_USD : 0;
 
     if (tp1StopHit || runnerStopHit) {
       const quantity = (tp1StopHit ? qtyTp1 : 0) + (runnerStopHit ? qtyRunner : 0);
@@ -431,30 +434,38 @@ export default function TrendRunnerHistoryScreen() {
 
       return {
         title: stopLabel,
-        detail: `Vender ${fmt(quantity, 8)}. Precio actual ${fmt(currentPrice, 6)} <= stop ${fmt(stopPrice, 6)}.`,
+        detail: `${quantity >= amount - EPSILON ? "Vender todo" : "Vender todo lo restante"} (${fmt(quantity, 8)}). Precio actual ${fmt(currentPrice, 6)} <= stop ${fmt(stopPrice, 6)}.`,
         tone: "stop",
       };
     }
 
     if (!strategy.tp1Reached && qtyTp1 > EPSILON && tp1Price > 0 && currentPrice >= tp1Price) {
+      if (minCloseValue > 0 && tp1Value < minCloseValue) {
+        return {
+          title: "TP1 alcanzado: no hacer nada",
+          detail: `La venta parcial seria ${position.fiatCurrency} ${fmt(tp1Value)} y eToro exige minimo $${fmt(minCloseValue)}. Mantener la posicion con trailing stop.`,
+          tone: "wait",
+        };
+      }
+
       return {
-        title: "Precio sobre TP1",
-        detail: `Vender ${fmt(qtyTp1, 8)}. Precio actual ${fmt(currentPrice, 6)} >= TP1 ${fmt(tp1Price, 6)}.`,
+        title: "Take profit 1 alcanzado",
+        detail: `Vender ${fmt(qtyTp1, 8)} (${position.fiatCurrency} ${fmt(tp1Value)}). Precio actual ${fmt(currentPrice, 6)} >= TP1 ${fmt(tp1Price, 6)}.`,
         tone: "profit",
       };
     }
 
     if (strategy.tp1Reached) {
       return {
-        title: "Esperar",
+        title: "No hacer nada",
         detail: `TP1 ya fue ejecutado. Mantener runner mientras el precio siga sobre ${fmt(runnerStop, 6)}.`,
         tone: "wait",
       };
     }
 
     return {
-      title: "Esperar",
-      detail: "No se alcanzó TP1, stop inicial ni trailing stop.",
+      title: "No hacer nada",
+      detail: "Mantener la posicion abierta. No se alcanzo TP1, stop loss ni trailing stop.",
       tone: "wait",
     };
   }, [getCurrentPrice]);

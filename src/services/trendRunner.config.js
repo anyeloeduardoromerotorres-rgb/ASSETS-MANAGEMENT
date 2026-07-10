@@ -34,6 +34,7 @@ export const TREND_RUNNER_PARAMS = {
 export const TREND_RUNNER_PORTFOLIO = {
   positionPct: 2.75,
   minPositionUsd: 20,
+  minEtoroCloseValueUsd: 10,
   individualStockMinSignalUsd: 1000,
   allowMargin: false,
   allowFractionalShares: true,

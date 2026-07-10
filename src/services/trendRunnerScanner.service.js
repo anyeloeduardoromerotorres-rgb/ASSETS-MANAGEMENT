@@ -3,6 +3,7 @@ import TrendRunnerSignal from "../models/trendRunnerSignal.model.js";
 import TrendRunnerPosition from "../models/trendRunnerPosition.model.js";
 import {
   TREND_RUNNER_PARAMS as P,
+  TREND_RUNNER_PORTFOLIO,
   TREND_RUNNER_UNIVERSE,
 } from "./trendRunner.config.js";
 import {
@@ -34,6 +35,12 @@ const toFinite = (value, fallback = 0) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 };
+
+const minCloseValueForPosition = (position) => (
+  position?.broker === "etoro"
+    ? toFinite(TREND_RUNNER_PORTFOLIO.minEtoroCloseValueUsd)
+    : 0
+);
 
 const isStockMarket = (market) => STOCK_MARKETS.has(market);
 
@@ -158,6 +165,13 @@ function calculateProfit(position) {
 
 function buildNotificationForSignal(signal) {
   if (signal.side === "close") {
+    if (signal.reason === "tp1_below_min_close_value") {
+      return {
+        title: `Trend Runner aviso: ${signal.symbol}`,
+        body: `TP1 alcanzado, pero el valor a vender es menor al minimo de eToro. No hacer nada.`,
+      };
+    }
+
     return {
       title: `Trend Runner cierre: ${signal.symbol}`,
       body: `${signal.signalType} cerca de ${toFinite(signal.suggested?.price).toFixed(4)}`,
@@ -370,7 +384,10 @@ async function upsertActiveOpenSignal(asset, analysis, capital, price, latestAna
       detectedAt: new Date(),
     });
   } else {
+    const notificationShouldReset =
+      signal.reason !== payload.reason || signal.signalType !== payload.signalType;
     Object.assign(signal, payload);
+    if (notificationShouldReset) signal.notification = undefined;
   }
 
   await signal.save();
@@ -565,6 +582,18 @@ function determineExitFromPosition(position, analysis, latestPrice) {
   }
 
   if (!strategy.tp1Reached && qtyTp1 > EPSILON && tp1Price > 0 && currentPrice >= tp1Price) {
+    const tp1ValueFiat = qtyTp1 * currentPrice;
+    const minCloseValue = minCloseValueForPosition(position);
+    if (minCloseValue > 0 && tp1ValueFiat < minCloseValue) {
+      return {
+        signalType: "TP1 menor al minimo",
+        reason: "tp1_below_min_close_value",
+        quantity: qtyTp1,
+        price: currentPrice,
+        valueFiat: tp1ValueFiat,
+      };
+    }
+
     return {
       signalType: "TP1",
       reason: "tp1",
@@ -651,7 +680,9 @@ async function upsertCloseSignal(position, exitInfo) {
     suggested: {
       price: exitInfo.price,
       quantity: exitInfo.quantity,
-      valueFiat: exitInfo.quantity * exitInfo.price,
+      valueFiat: Number.isFinite(Number(exitInfo.valueFiat))
+        ? exitInfo.valueFiat
+        : exitInfo.quantity * exitInfo.price,
       fiatCurrency: position.fiatCurrency,
       capitalSource: position.capitalSource === "USDT" ? "USDT" : "USD",
     },
