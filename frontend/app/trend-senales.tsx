@@ -53,11 +53,15 @@ type TrendSignal = {
     availableUsdt?: number;
   };
   parameters?: {
+    atr?: number;
+    tp1Rr?: number;
     initialStop?: number;
     tp1Price?: number;
+    finalTpPrice?: number;
     runnerStop?: number;
     tp1QtyPct?: number;
     trailAtr?: number;
+    finalTpRr?: number;
   };
   quality?: {
     score?: number;
@@ -159,6 +163,25 @@ const calculateTp1Quantity = (signal: TrendSignal) => {
 
   if (!Number.isFinite(quantity) || !Number.isFinite(tp1Pct)) return undefined;
   return Number(quantity) * (Number(tp1Pct) / 100);
+};
+
+const calculateOpenLevelsFromRealPrice = (signal: TrendSignal, openPriceText: string) => {
+  const openPrice = parseInput(openPriceText);
+  const suggestedPrice = Number(signal.suggested?.price);
+  const priceDelta = Number.isFinite(openPrice) && openPrice > 0 && Number.isFinite(suggestedPrice) && suggestedPrice > 0
+    ? openPrice - suggestedPrice
+    : 0;
+
+  const shiftLevel = (value?: number) => (
+    Number.isFinite(value) ? Number(value) + priceDelta : undefined
+  );
+
+  return {
+    initialStop: shiftLevel(signal.parameters?.initialStop),
+    tp1Price: shiftLevel(signal.parameters?.tp1Price),
+    finalTpPrice: shiftLevel(signal.parameters?.finalTpPrice),
+    runnerStop: shiftLevel(signal.parameters?.runnerStop ?? signal.parameters?.initialStop),
+  };
 };
 
 const getCloseSignalAction = (signal: TrendSignal): SignalAction | null => {
@@ -794,6 +817,16 @@ export default function TrendRunnerSignalsScreen() {
                     ))}
                     keyboardType="numeric"
                   />
+                  {selectedSignal ? (() => {
+                    const levels = calculateOpenLevelsFromRealPrice(selectedSignal, openForm.openPrice);
+                    return (
+                      <View style={styles.openLevelsBox}>
+                        <Text style={styles.openLevelsTitle}>Niveles con precio real</Text>
+                        <Text style={styles.openLevelsText}>Stop loss: {fmt(levels.initialStop, 6)}</Text>
+                        <Text style={styles.openLevelsText}>TP1: {fmt(levels.tp1Price, 6)} · Runner: {fmt(levels.runnerStop, 6)}</Text>
+                      </View>
+                    );
+                  })() : null}
                   <Text style={styles.label}>Cantidad real</Text>
                   <TextInput
                     style={styles.input}
@@ -915,6 +948,9 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 20, fontWeight: "800", marginBottom: 12 },
   label: { fontSize: 14, fontWeight: "700", color: "#37474f", marginTop: 8, marginBottom: 4 },
   input: { borderWidth: 1, borderColor: "#cfd8dc", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 9, fontSize: 16 },
+  openLevelsBox: { borderRadius: 8, borderWidth: 1, borderColor: "#bbdefb", backgroundColor: "#e3f2fd", padding: 8, marginTop: 8, gap: 2 },
+  openLevelsTitle: { fontSize: 13, fontWeight: "800", color: "#0d47a1" },
+  openLevelsText: { fontSize: 13, color: "#263238" },
   modalButton: { marginTop: 12, borderRadius: 8, paddingVertical: 11, alignItems: "center", backgroundColor: "#2e7d32" },
   cancelButton: { backgroundColor: "#546e7a" },
 });

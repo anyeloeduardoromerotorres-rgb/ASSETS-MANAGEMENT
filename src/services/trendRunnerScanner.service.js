@@ -42,6 +42,37 @@ const minCloseValueForPosition = (position) => (
     : 0
 );
 
+function repriceEntryParametersForOpen(params = {}, openPrice, suggestedPrice) {
+  const priceDelta = Number.isFinite(suggestedPrice) && suggestedPrice > 0
+    ? openPrice - suggestedPrice
+    : 0;
+  const atrRisk = toFinite(params.atr) > 0 ? toFinite(params.atr) * P.atrStopMultiple : 0;
+  const initialStop = toFinite(params.initialStop) > 0
+    ? toFinite(params.initialStop) + priceDelta
+    : atrRisk > 0
+      ? openPrice - atrRisk
+      : params.initialStop;
+  const risk = Number.isFinite(initialStop) ? Math.max(openPrice - initialStop, 0) : atrRisk;
+  const tp1Price = toFinite(params.tp1Price) > 0
+    ? toFinite(params.tp1Price) + priceDelta
+    : risk > 0
+      ? openPrice + risk * toFinite(params.tp1Rr)
+      : params.tp1Price;
+  const finalTpPrice = toFinite(params.finalTpPrice) > 0
+    ? toFinite(params.finalTpPrice) + priceDelta
+    : risk > 0
+      ? openPrice + risk * toFinite(params.finalTpRr)
+      : params.finalTpPrice;
+
+  return {
+    ...params,
+    initialStop,
+    tp1Price,
+    finalTpPrice,
+    runnerStop: initialStop,
+  };
+}
+
 const isStockMarket = (market) => STOCK_MARKETS.has(market);
 
 function normalizeMarketFilter(market) {
@@ -796,7 +827,11 @@ export async function createPositionFromSignal(signalId, payload = {}) {
     throw new Error("Datos de apertura invalidos");
   }
 
-  const params = signal.parameters ?? {};
+  const params = repriceEntryParametersForOpen(
+    signal.parameters ?? {},
+    openPrice,
+    toFinite(signal.suggested?.price, openPrice)
+  );
   const tp1QtyPct = toFinite(params.tp1QtyPct, 0);
   const qtyTp1 = round8(amount * (tp1QtyPct / 100));
   const qtyRunner = round8(Math.max(0, amount - qtyTp1));
